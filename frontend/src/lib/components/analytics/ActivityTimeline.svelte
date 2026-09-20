@@ -24,6 +24,7 @@
   } from "../../i18n/index.js";
 
   type Metric = "messages" | "sessions";
+  type ScaleMode = "absolute" | "percent";
   const MAX_DAY_RANGE = 120;
   interface Props {
     deferInitialFetch?: boolean;
@@ -34,9 +35,13 @@
   let { onRangeSelect, onRangeClear, deferInitialFetch = false }: Props = $props();
 
   let metric = $state<Metric>("messages");
+  let scaleMode = $state<ScaleMode>("absolute");
   let chartAreaWidth = $state(0);
   let keyboardAnchorIndex = $state<number | null>(null);
   const selectedRange = $derived(analytics.selectedActivityRange);
+  const percentScale = $derived(
+    metric === "messages" && scaleMode === "percent",
+  );
 
   const dayRangeCount = $derived.by(() => {
     const from = Date.parse(`${analytics.from}T00:00:00Z`);
@@ -103,7 +108,7 @@
   const chart = $derived.by(() => {
     const activitySeries = analytics.activity?.series;
     if (!activitySeries || activitySeries.length === 0) {
-      return { bars: [], labels: [] as string[] };
+      return { bars: [] };
     }
 
     const byDate = new Map(
@@ -119,13 +124,36 @@
           assistant_messages: 0,
         })
       : activitySeries;
-    const bars = series.map((entry) => ({
-      value: metric === "messages" ? entry.messages : entry.sessions,
-      date: entry.date,
-      instant: new Date(`${entry.date}T00:00:00Z`),
-      userMessages: entry.user_messages,
-      assistantMessages: entry.assistant_messages,
-    }));
+    const bars = series.map((entry) => {
+      const userMessages = entry.user_messages;
+      const assistantMessages = entry.assistant_messages;
+      const splitTotal = userMessages + assistantMessages;
+      let value: number;
+      let userRange: [number, number];
+      let assistantRange: [number, number];
+      if (percentScale) {
+        const userPct = splitTotal > 0
+          ? (userMessages / splitTotal) * 100
+          : 0;
+        value = 100;
+        userRange = [0, userPct];
+        assistantRange = [userPct, splitTotal > 0 ? 100 : 0];
+      } else {
+        value = metric === "messages" ? entry.messages : entry.sessions;
+        userRange = [0, userMessages];
+        assistantRange = [userMessages, splitTotal];
+      }
+      return {
+        value,
+        total: metric === "messages" ? entry.messages : entry.sessions,
+        date: entry.date,
+        instant: new Date(`${entry.date}T00:00:00Z`),
+        userMessages,
+        assistantMessages,
+        userRange,
+        assistantRange,
+      };
+    });
 
     return { bars };
   });
@@ -162,6 +190,34 @@
     });
   }
 
+  function barClass(
+    bar: (typeof chart.bars)[number],
+    segment?: "user" | "assistant",
+  ): string {
+    const inSelection = selectedRange !== null &&
+      bar.date >= bucketStart(selectedRange.from) &&
+      bar.date <= bucketStart(selectedRange.to);
+    const dimmed = selectedRange !== null && !inSelection;
+    return `bar${bar.total === 0 ? " empty" : ""}${inSelection ? " selected" : ""}${dimmed ? " dimmed" : ""}${segment ? ` bar-${segment}` : ""}`;
+  }
+
+  function splitPercent(bar: (typeof chart.bars)[number]): {
+    user: string;
+    assistant: string;
+  } {
+    const splitTotal = bar.userMessages + bar.assistantMessages;
+    const format = new Intl.NumberFormat(getLocale(), {
+      style: "percent",
+      maximumFractionDigits: 1,
+    });
+    return {
+      user: format.format(splitTotal > 0 ? bar.userMessages / splitTotal : 0),
+      assistant: format.format(
+        splitTotal > 0 ? bar.assistantMessages / splitTotal : 0,
+      ),
+    };
+  }
+
   let tooltip = $state<{
     x: number;
     y: number;
@@ -183,17 +239,23 @@
     const lines = [
       m.analytics_activity_timeline_tooltip_value({
         label,
-        value: bar.value.toLocaleString(getLocale()),
+        value: bar.total.toLocaleString(getLocale()),
         metric: metric === "messages"
           ? m.analytics_metric_messages()
           : m.analytics_metric_sessions(),
       }),
     ];
     if (metric === "messages") {
+      const split = percentScale
+        ? splitPercent(bar)
+        : {
+            user: bar.userMessages.toLocaleString(getLocale()),
+            assistant: bar.assistantMessages.toLocaleString(getLocale()),
+          };
       lines.push(
         m.analytics_activity_timeline_tooltip_messages({
-          user: bar.userMessages,
-          assistant: bar.assistantMessages,
+          user: split.user,
+          assistant: split.assistant,
         }),
       );
     }
@@ -376,6 +438,24 @@
           {m.analytics_granularity_month()}
         </button>
       </div>
+      {#if metric === "messages"}
+        <div class="scale-toggle">
+          <button
+            class="toggle-btn"
+            class:active={scaleMode === "absolute"}
+            onclick={() => (scaleMode = "absolute")}
+          >
+            {m.analytics_activity_timeline_mode_absolute()}
+          </button>
+          <button
+            class="toggle-btn"
+            class:active={scaleMode === "percent"}
+            onclick={() => (scaleMode = "percent")}
+          >
+            {m.analytics_activity_timeline_mode_percent()}
+          </button>
+        </div>
+      {/if}
       {#if selectedRange}
         <Button
           size="sm"
@@ -383,6 +463,18 @@
           label={m.sidebar_clear_selection()}
           onclick={clearDateRange}
         />
+      {/if}
+      {#if metric === "messages"}
+        <div class="segment-legend">
+          <span class="legend-item">
+            <span class="legend-swatch user" aria-hidden="true"></span>
+            {m.message_content_role_user()}
+          </span>
+          <span class="legend-item">
+            <span class="legend-swatch assistant" aria-hidden="true"></span>
+            {m.message_content_role_assistant()}
+          </span>
+        </div>
       {/if}
     </div>
   </div>
@@ -437,27 +529,59 @@
       >
         {#snippet marks()}
           {#each chart.bars as bar, index (bar.date)}
-            <Bar
-              data={bar}
-              x="instant"
-              radius={1}
-              insets={{ left: barInset, right: barInset }}
-              class={`bar${bar.value === 0 ? " empty" : ""}${selectedRange && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to) ? " selected" : ""}${selectedRange && (bar.date < bucketStart(selectedRange.from) || bar.date > bucketStart(selectedRange.to)) ? " dimmed" : ""}`}
-              role="button"
-              tabindex={0}
-              data-activity-bar-index={index}
-              aria-pressed={selectedRange !== null && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to)}
-              aria-label={m.analytics_activity_timeline_tooltip_value({
-                label: formatDateLabel(bar.instant),
-                value: bar.value.toLocaleString(getLocale()),
-                metric: metric === "messages"
-                  ? m.analytics_metric_messages()
-                  : m.analytics_metric_sessions(),
-              })}
-              onpointerenter={(event) => handleBarHover(event, bar)}
-              onpointerleave={handleBarLeave}
-              onkeydown={(event) => handleBarKeydown(event, index)}
-            />
+            {#if metric === "messages"}
+              <Bar
+                data={bar}
+                x="instant"
+                y="userRange"
+                radius={1}
+                insets={{ left: barInset, right: barInset }}
+                class={barClass(bar, "user")}
+                role="button"
+                tabindex={0}
+                data-activity-bar-index={index}
+                aria-pressed={selectedRange !== null && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to)}
+                aria-label={m.analytics_activity_timeline_tooltip_value({
+                  label: formatDateLabel(bar.instant),
+                  value: bar.total.toLocaleString(getLocale()),
+                  metric: m.analytics_metric_messages(),
+                })}
+                onpointerenter={(event) => handleBarHover(event, bar)}
+                onpointerleave={handleBarLeave}
+                onkeydown={(event) => handleBarKeydown(event, index)}
+              />
+              <Bar
+                data={bar}
+                x="instant"
+                y="assistantRange"
+                radius={1}
+                insets={{ left: barInset, right: barInset }}
+                class={barClass(bar, "assistant")}
+                aria-hidden="true"
+                onpointerenter={(event) => handleBarHover(event, bar)}
+                onpointerleave={handleBarLeave}
+              />
+            {:else}
+              <Bar
+                data={bar}
+                x="instant"
+                radius={1}
+                insets={{ left: barInset, right: barInset }}
+                class={barClass(bar)}
+                role="button"
+                tabindex={0}
+                data-activity-bar-index={index}
+                aria-pressed={selectedRange !== null && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to)}
+                aria-label={m.analytics_activity_timeline_tooltip_value({
+                  label: formatDateLabel(bar.instant),
+                  value: bar.total.toLocaleString(getLocale()),
+                  metric: m.analytics_metric_sessions(),
+                })}
+                onpointerenter={(event) => handleBarHover(event, bar)}
+                onpointerleave={handleBarLeave}
+                onkeydown={(event) => handleBarKeydown(event, index)}
+              />
+            {/if}
           {/each}
         {/snippet}
       </BarChart>
@@ -501,7 +625,8 @@
   }
 
   .metric-toggle,
-  .granularity-toggle {
+  .granularity-toggle,
+  .scale-toggle {
     display: flex;
     gap: 2px;
   }
@@ -532,6 +657,35 @@
     color: var(--text-primary);
   }
 
+  .segment-legend {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto;
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    color: var(--text-muted);
+  }
+
+  .legend-swatch {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+
+  .legend-swatch.user {
+    background: var(--accent-green);
+  }
+
+  .legend-swatch.assistant {
+    background: var(--accent-blue);
+  }
+
   .chart-area {
     position: relative;
     padding-bottom: 4px;
@@ -553,6 +707,18 @@
     fill: var(--accent-blue);
     opacity: 0.8;
     transition: opacity 0.15s;
+  }
+
+  .timeline-container :global(.bar-user) {
+    fill: var(--accent-green);
+  }
+
+  .timeline-container :global(.bar-assistant) {
+    fill: var(--accent-blue);
+  }
+
+  .timeline-container :global(.bar-user:focus-visible + .bar-assistant) {
+    opacity: 1;
   }
 
   .timeline-container :global(.bar:hover) {
