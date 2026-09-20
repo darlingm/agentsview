@@ -128,30 +128,49 @@
       const userMessages = entry.user_messages;
       const assistantMessages = entry.assistant_messages;
       const splitTotal = userMessages + assistantMessages;
+      const total = metric === "messages" ? entry.messages : entry.sessions;
+      // The message total also counts tool-result carrier rows and
+      // system-injected rows that belong to neither role segment.
+      const otherMessages = metric === "messages"
+        ? Math.max(0, total - splitTotal)
+        : 0;
       let value: number;
       let userRange: [number, number];
       let assistantRange: [number, number];
-      if (percentScale) {
-        const userPct = splitTotal > 0
-          ? (userMessages / splitTotal) * 100
-          : 0;
-        value = 100;
-        userRange = [0, userPct];
-        assistantRange = [userPct, splitTotal > 0 ? 100 : 0];
+      let otherRange: [number, number];
+      if (metric === "messages") {
+        if (percentScale) {
+          const toPct = (part: number) =>
+            total > 0 ? (part / total) * 100 : 0;
+          const userPct = toPct(userMessages);
+          const assistantPct = toPct(assistantMessages);
+          value = 100;
+          userRange = [0, userPct];
+          assistantRange = [userPct, userPct + assistantPct];
+          otherRange = [userPct + assistantPct, total > 0 ? 100 : 0];
+        } else {
+          value = total;
+          userRange = [0, userMessages];
+          assistantRange = [userMessages, splitTotal];
+          otherRange = [splitTotal, total];
+        }
       } else {
-        value = metric === "messages" ? entry.messages : entry.sessions;
-        userRange = [0, userMessages];
-        assistantRange = [userMessages, splitTotal];
+        value = total;
+        userRange = [0, 0];
+        assistantRange = [0, 0];
+        otherRange = [0, 0];
       }
       return {
         value,
-        total: metric === "messages" ? entry.messages : entry.sessions,
+        total,
         date: entry.date,
         instant: new Date(`${entry.date}T00:00:00Z`),
         userMessages,
         assistantMessages,
+        otherMessages,
         userRange,
         assistantRange,
+        otherRange,
       };
     });
 
@@ -192,7 +211,7 @@
 
   function barClass(
     bar: (typeof chart.bars)[number],
-    segment?: "user" | "assistant",
+    segment?: "user" | "assistant" | "other",
   ): string {
     const inSelection = selectedRange !== null &&
       bar.date >= bucketStart(selectedRange.from) &&
@@ -204,17 +223,18 @@
   function splitPercent(bar: (typeof chart.bars)[number]): {
     user: string;
     assistant: string;
+    other: string;
   } {
-    const splitTotal = bar.userMessages + bar.assistantMessages;
     const format = new Intl.NumberFormat(getLocale(), {
       style: "percent",
       maximumFractionDigits: 1,
     });
+    const toPct = (part: number) =>
+      format.format(bar.total > 0 ? part / bar.total : 0);
     return {
-      user: format.format(splitTotal > 0 ? bar.userMessages / splitTotal : 0),
-      assistant: format.format(
-        splitTotal > 0 ? bar.assistantMessages / splitTotal : 0,
-      ),
+      user: toPct(bar.userMessages),
+      assistant: toPct(bar.assistantMessages),
+      other: toPct(bar.otherMessages),
     };
   }
 
@@ -251,11 +271,13 @@
         : {
             user: bar.userMessages.toLocaleString(getLocale()),
             assistant: bar.assistantMessages.toLocaleString(getLocale()),
+            other: bar.otherMessages.toLocaleString(getLocale()),
           };
       lines.push(
         m.analytics_activity_timeline_tooltip_messages({
           user: split.user,
           assistant: split.assistant,
+          other: split.other,
         }),
       );
     }
@@ -474,6 +496,10 @@
             <span class="legend-swatch assistant" aria-hidden="true"></span>
             {m.message_content_role_assistant()}
           </span>
+          <span class="legend-item">
+            <span class="legend-swatch other" aria-hidden="true"></span>
+            {m.shared_other()}
+          </span>
         </div>
       {/if}
     </div>
@@ -557,6 +583,17 @@
                 radius={1}
                 insets={{ left: barInset, right: barInset }}
                 class={barClass(bar, "assistant")}
+                aria-hidden="true"
+                onpointerenter={(event) => handleBarHover(event, bar)}
+                onpointerleave={handleBarLeave}
+              />
+              <Bar
+                data={bar}
+                x="instant"
+                y="otherRange"
+                radius={1}
+                insets={{ left: barInset, right: barInset }}
+                class={barClass(bar, "other")}
                 aria-hidden="true"
                 onpointerenter={(event) => handleBarHover(event, bar)}
                 onpointerleave={handleBarLeave}
@@ -686,6 +723,10 @@
     background: var(--accent-blue);
   }
 
+  .legend-swatch.other {
+    background: var(--chart-series-other);
+  }
+
   .chart-area {
     position: relative;
     padding-bottom: 4px;
@@ -717,7 +758,15 @@
     fill: var(--accent-blue);
   }
 
-  .timeline-container :global(.bar-user:focus-visible + .bar-assistant) {
+  .timeline-container :global(.bar-other) {
+    fill: var(--chart-series-other);
+  }
+
+  .timeline-container :global(.bar-user:focus-visible ~ .bar-assistant) {
+    opacity: 1;
+  }
+
+  .timeline-container :global(.bar-user:focus-visible ~ .bar-other) {
     opacity: 1;
   }
 
