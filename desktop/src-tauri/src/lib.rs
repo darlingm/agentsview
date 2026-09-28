@@ -1369,27 +1369,35 @@ where
 
 fn save_sidecar(app: &AppHandle, child: CommandChild) -> Result<u64, DynError> {
     let state = app.state::<SidecarState>();
+    register_startup_generation(&state, |generation| {
+        let mut guard = state
+            .child
+            .lock()
+            .map_err(|_| io::Error::other("sidecar state lock poisoned"))?;
+        *guard = Some(SidecarProcess { child, generation });
+        if let Ok(mut active_generation) = state.active_generation.lock() {
+            *active_generation = Some(generation);
+        }
+        if let Ok(mut stopping_generation) = state.stopping_generation.lock() {
+            *stopping_generation = None;
+        }
+        if let Ok(mut restart_generation) = state.restart_after_stop_timeout_generation.lock() {
+            *restart_generation = None;
+        }
+        Ok(generation)
+    })
+}
+
+fn register_startup_generation<T, F>(state: &SidecarState, register: F) -> Result<T, DynError>
+where
+    F: FnOnce(u64) -> Result<T, DynError>,
+{
     let mut generation_guard = state
         .next_generation
         .lock()
         .map_err(|_| io::Error::other("sidecar generation lock poisoned"))?;
     *generation_guard += 1;
-    let generation = *generation_guard;
-    let mut guard = state
-        .child
-        .lock()
-        .map_err(|_| io::Error::other("sidecar state lock poisoned"))?;
-    *guard = Some(SidecarProcess { child, generation });
-    if let Ok(mut active_generation) = state.active_generation.lock() {
-        *active_generation = Some(generation);
-    }
-    if let Ok(mut stopping_generation) = state.stopping_generation.lock() {
-        *stopping_generation = None;
-    }
-    if let Ok(mut restart_generation) = state.restart_after_stop_timeout_generation.lock() {
-        *restart_generation = None;
-    }
-    Ok(generation)
+    register(*generation_guard)
 }
 
 fn with_current_startup<T, F>(state: &SidecarState, generation: u64, apply: F) -> Option<T>
@@ -1408,15 +1416,47 @@ fn startup_generation_is_current(app: &AppHandle, generation: u64) -> bool {
     with_current_startup(&state, generation, || ()).is_some()
 }
 
+fn eval_if_current(window: &WebviewWindow, generation: u64, script: &str) -> bool {
+    let state = window.app_handle().state::<SidecarState>();
+    with_current_startup(&state, generation, || window.eval(script).is_ok()).unwrap_or(false)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn run_startup_fallback_once<F>(
+    state: &SidecarState,
+    generation: u64,
+    triggered: &AtomicBool,
+    open: F,
+) -> bool
+where
+    F: FnOnce(),
+{
+    with_current_startup(state, generation, || {
+        if triggered.swap(true, Ordering::SeqCst) {
+            return false;
+        }
+        open();
+        true
+    })
+    .unwrap_or(false)
+}
+
+fn publish_sidecar_port<F>(state: &SidecarState, generation: u64, port: u16, defer: F) -> bool
+where
+    F: FnOnce(),
+{
+    with_current_startup(state, generation, || {
+        defer();
+        set_sidecar_port(state, Some(port));
+    })
+    .is_some()
+}
+
 fn save_sidecar_port(app: &AppHandle, generation: u64, port: u16) -> bool {
     // Defer before publishing so a deep link cannot observe the new
     // port and navigate ahead of the pending readiness redirect.
     let state = app.state::<SidecarState>();
-    with_current_startup(&state, generation, || {
-        defer_deep_link_dispatch(app);
-        set_sidecar_port(&state, Some(port));
-    })
-    .is_some()
+    publish_sidecar_port(&state, generation, port, || defer_deep_link_dispatch(app))
 }
 
 fn clear_sidecar_port(app: &AppHandle) {
@@ -1623,19 +1663,17 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
         .as_str(),
     );
     let timeout_window = window.clone();
-    let timeout_handle = window.app_handle().clone();
     let timeout_state = startup_handled.clone();
     thread::spawn(move || {
         thread::sleep(READY_TIMEOUT);
-        let state = timeout_handle.state::<SidecarState>();
-        let _ = with_current_startup(&state, generation, || {
-            if !timeout_state.load(Ordering::SeqCst) {
-                let _ = timeout_window.eval(
-                    "window.__setStatus(\
-                     'AgentsView backend is still starting. Large migrations or initial syncs can take several minutes.');",
-                );
-            }
-        });
+        if !timeout_state.load(Ordering::SeqCst) {
+            let _ = eval_if_current(
+                &timeout_window,
+                generation,
+                "window.__setStatus(\
+                 'AgentsView backend is still starting. Large migrations or initial syncs can take several minutes.');",
+            );
+        }
     });
 
     tauri::async_runtime::spawn(async move {
@@ -2085,19 +2123,20 @@ fn recover_webview(window: &WebviewWindow, port: u16) {
 fn complete_startup_result<T, Ready, Timeout>(
     state: &SidecarState,
     generation: u64,
+    port: u16,
     ready: bool,
     on_ready: Ready,
     on_timeout: Timeout,
 ) -> Option<T>
 where
-    Ready: FnOnce() -> T,
-    Timeout: FnOnce() -> T,
+    Ready: FnOnce(u16) -> T,
+    Timeout: FnOnce(u16) -> T,
 {
     with_current_startup(state, generation, || {
         if ready {
-            on_ready()
+            on_ready(port)
         } else {
-            on_timeout()
+            on_timeout(port)
         }
     })
 }
@@ -2119,8 +2158,9 @@ fn redirect_when_ready(
         let _ = complete_startup_result(
             &state,
             generation,
+            port,
             ready,
-            move || {
+            move |port| {
                 let deferred_route = take_pending_deep_link_route(&ready_handle);
                 let target_url = match deferred_route.as_deref() {
                     Some(route) => {
@@ -2180,7 +2220,7 @@ fn redirect_when_ready(
                     navigate_main_window_to_route(&ready_handle, port, route.as_str());
                 }
             },
-            move || {
+            move |port| {
                 spawn_startup_error_render(
                     timeout_window,
                     "AgentsView interface did not respond",
@@ -2242,11 +2282,11 @@ fn poll_background_status_after_launcher_exit(
                     unhealthy_since = None;
                     if !long_startup_notice_shown && !status.trim().is_empty() {
                         let escaped = status.replace('\\', "\\\\").replace('\'', "\\'");
-                        let state = handle.state::<SidecarState>();
-                        let _ = with_current_startup(&state, generation, || {
-                            let _ =
-                                window.eval(format!("window.__setStatus('{escaped}');").as_str());
-                        });
+                        let _ = eval_if_current(
+                            &window,
+                            generation,
+                            format!("window.__setStatus('{escaped}');").as_str(),
+                        );
                     }
                 }
                 BackendStatusProbe::Unhealthy(status) => {
@@ -2266,13 +2306,12 @@ fn poll_background_status_after_launcher_exit(
                         );
                         return;
                     }
-                    let state = handle.state::<SidecarState>();
-                    let _ = with_current_startup(&state, generation, || {
-                        let _ = window.eval(
-                            "window.__setStatus(\
-                             'AgentsView found a backend process, but health checks are not responding yet.');",
-                        );
-                    });
+                    let _ = eval_if_current(
+                        &window,
+                        generation,
+                        "window.__setStatus(\
+                         'AgentsView found a backend process, but health checks are not responding yet.');",
+                    );
                 }
                 BackendStatusProbe::NotRunning(status) => {
                     spawn_startup_error_render(
@@ -2346,25 +2385,23 @@ fn poll_background_status_after_launcher_exit(
                         return;
                     }
                     if failed_status_probes == STATUS_PROBE_FAILURE_NOTICE_AFTER {
-                        let state = handle.state::<SidecarState>();
-                        let _ = with_current_startup(&state, generation, || {
-                            let _ = window.eval(
-                                "window.__setStatus(\
-                                 'Waiting for background daemon status. Check serve.log if this persists.');",
-                            );
-                        });
+                        let _ = eval_if_current(
+                            &window,
+                            generation,
+                            "window.__setStatus(\
+                             'Waiting for background daemon status. Check serve.log if this persists.');",
+                        );
                     }
                 }
             }
             if !long_startup_notice_shown && started.elapsed() >= DAEMON_STARTUP_LONG_NOTICE_AFTER {
                 long_startup_notice_shown = true;
-                let state = handle.state::<SidecarState>();
-                let _ = with_current_startup(&state, generation, || {
-                    let _ = window.eval(
-                        "window.__setStatus(\
-                         'AgentsView is still preparing the local archive. Large migrations or full resyncs can take many minutes.');",
-                    );
-                });
+                let _ = eval_if_current(
+                    &window,
+                    generation,
+                    "window.__setStatus(\
+                     'AgentsView is still preparing the local archive. Large migrations or full resyncs can take many minutes.');",
+                );
             }
             tokio::time::sleep(background_status_poll_interval(
                 status_poll_backoff_attempts,
@@ -2529,11 +2566,7 @@ fn spawn_webview_health_fallback(window: WebviewWindow, port: u16, generation: u
         }
         let handle = window.app_handle().clone();
         let state = handle.state::<SidecarState>();
-        let _ = with_current_startup(&state, generation, || {
-            if FALLBACK_TRIGGERED.swap(true, Ordering::SeqCst) {
-                return;
-            }
-
+        let _ = run_startup_fallback_once(&state, generation, &FALLBACK_TRIGGERED, || {
             let url = format!("http://{HOST}:{port}");
             eprintln!(
                 "[agentsview] WebView content process is not responding \
@@ -5153,9 +5186,16 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state,
             1,
+            8080,
             false,
-            || effects.lock().expect("lock effects").push("ready"),
-            || effects.lock().expect("lock effects").push("old timeout"),
+            |_| effects
+                .lock()
+                .expect("lock effects")
+                .push("ready".to_string()),
+            |port| effects
+                .lock()
+                .expect("lock effects")
+                .push(format!("old timeout {port}")),
         )
         .is_some());
 
@@ -5163,12 +5203,22 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state,
             1,
+            8080,
             false,
-            || effects.lock().expect("lock effects").push("ready"),
-            || effects.lock().expect("lock effects").push("stale timeout"),
+            |_| effects
+                .lock()
+                .expect("lock effects")
+                .push("ready".to_string()),
+            |port| effects
+                .lock()
+                .expect("lock effects")
+                .push(format!("stale timeout {port}")),
         )
         .is_none());
-        assert_eq!(*effects.lock().expect("lock effects"), vec!["old timeout"]);
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["old timeout 8080"]
+        );
     }
 
     #[test]
@@ -5191,17 +5241,35 @@ agentsview running at http://127.0.0.1:18082
 
         entered_receiver.recv().expect("wait for admitted effect");
         let replacement_state = state.clone();
+        let (replacement_started_sender, replacement_started_receiver) =
+            std::sync::mpsc::sync_channel(0);
+        let (replacement_done_sender, replacement_done_receiver) = std::sync::mpsc::sync_channel(1);
         let replacement = thread::spawn(move || {
-            let mut generation = replacement_state
-                .next_generation
-                .lock()
-                .expect("lock replacement generation");
-            *generation = 2;
+            replacement_started_sender
+                .send(())
+                .expect("signal replacement start");
+            register_startup_generation(&replacement_state, |generation| {
+                replacement_done_sender
+                    .send(generation)
+                    .expect("signal registered launch");
+                Ok(())
+            })
+            .expect("register replacement launch");
         });
+        replacement_started_receiver
+            .recv()
+            .expect("wait for replacement start");
+        assert!(replacement_done_receiver.try_recv().is_err());
         assert!(effects.lock().expect("lock effects").is_empty());
         release_sender.send(()).expect("release generation A");
         first.join().expect("join generation A");
         replacement.join().expect("join generation B");
+        assert_eq!(
+            replacement_done_receiver
+                .recv()
+                .expect("registered generation"),
+            2
+        );
         assert_eq!(*effects.lock().expect("lock effects"), vec!["A"]);
         assert!(with_current_startup(&state, 1, || ()).is_none());
         assert!(with_current_startup(&state, 2, || ()).is_some());
@@ -5219,15 +5287,16 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state,
             1,
+            8080,
             true,
-            || {
+            |port| {
                 let route = dispatch.take_pending().expect("stale route");
                 effects
                     .lock()
                     .expect("lock effects")
-                    .push(format!("A:8080:{route}"));
+                    .push(format!("A:{port}:{route}"));
             },
-            || effects
+            |_| effects
                 .lock()
                 .expect("lock effects")
                 .push("A timeout".to_string()),
@@ -5242,15 +5311,16 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state,
             2,
+            49167,
             true,
-            || {
+            |port| {
                 let route = dispatch.take_pending().expect("current route");
                 effects
                     .lock()
                     .expect("lock effects")
-                    .push(format!("B:64673:{route}"));
+                    .push(format!("B:{port}:{route}"));
             },
-            || effects
+            |_| effects
                 .lock()
                 .expect("lock effects")
                 .push("B timeout".to_string()),
@@ -5258,7 +5328,7 @@ agentsview running at http://127.0.0.1:18082
         .is_some());
         assert_eq!(
             *effects.lock().expect("lock effects"),
-            vec!["B:64673:/sessions/synthetic-latest?msg=9"]
+            vec!["B:49167:/sessions/synthetic-latest?msg=9"]
         );
     }
 
@@ -5279,21 +5349,59 @@ agentsview running at http://127.0.0.1:18082
             BackendStatusProbe::Ready(64673)
         );
 
-        let backend_port = std::sync::Mutex::new(None);
+        let deferred = AtomicUsize::new(0);
         *state.next_generation.lock().expect("lock generation") = 2;
-        assert!(with_current_startup(&state, 1, || {
-            *backend_port.lock().expect("lock backend port") = stdout_port;
-        })
-        .is_none());
-        assert_eq!(*backend_port.lock().expect("lock backend port"), None);
-        assert!(with_current_startup(&state, 2, || {
-            *backend_port.lock().expect("lock backend port") = Some(64673);
-        })
-        .is_some());
+        assert!(!publish_sidecar_port(
+            &state,
+            1,
+            stdout_port.unwrap(),
+            || {
+                deferred.fetch_add(1, Ordering::SeqCst);
+            }
+        ));
+        assert_eq!(*state.backend_port.lock().expect("lock backend port"), None);
+        assert!(publish_sidecar_port(&state, 2, 64673, || {
+            deferred.fetch_add(1, Ordering::SeqCst);
+        }));
         assert_eq!(
-            *backend_port.lock().expect("lock backend port"),
+            *state.backend_port.lock().expect("lock backend port"),
             Some(64673)
         );
+        assert_eq!(deferred.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn startup_generation_wiring() {
+        let source = include_str!("lib.rs");
+        let forward = source
+            .split("fn forward_sidecar_logs(")
+            .nth(1)
+            .and_then(|part| part.split("fn main_window(").next())
+            .expect("sidecar event consumer");
+        let redirect = source
+            .split("fn redirect_when_ready(")
+            .nth(1)
+            .and_then(|part| {
+                part.split("fn poll_background_status_after_launcher_exit(")
+                    .next()
+            })
+            .expect("readiness consumer");
+        let poll = source
+            .split("fn poll_background_status_after_launcher_exit(")
+            .nth(1)
+            .and_then(|part| part.split("fn background_status_poll_interval(").next())
+            .expect("status poll consumer");
+        let fallback = source
+            .split("fn spawn_webview_health_fallback(")
+            .nth(1)
+            .and_then(|part| part.split("fn extract_startup_status(").next())
+            .expect("Linux fallback consumer");
+
+        assert!(forward.contains("save_sidecar_port(window.app_handle(), generation, port)"));
+        assert!(redirect.contains("complete_startup_result("));
+        assert!(poll.contains("save_sidecar_port(&handle, generation, port)"));
+        assert!(poll.contains("eval_if_current("));
+        assert!(fallback.contains("run_startup_fallback_once("));
     }
 
     #[test]
@@ -5305,9 +5413,10 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state,
             1,
+            8080,
             false,
-            || effects.lock().expect("lock effects").push("ready"),
-            || effects.lock().expect("lock effects").push("error"),
+            |_| effects.lock().expect("lock effects").push("ready"),
+            |_| effects.lock().expect("lock effects").push("error"),
         )
         .is_none());
         assert!(effects.lock().expect("lock effects").is_empty());
@@ -5316,9 +5425,10 @@ agentsview running at http://127.0.0.1:18082
         assert!(complete_startup_result(
             &state_for_retry,
             2,
+            49167,
             false,
-            || effects.lock().expect("lock effects").push("ready"),
-            || effects.lock().expect("lock effects").push("current error"),
+            |_| effects.lock().expect("lock effects").push("ready"),
+            |_| effects.lock().expect("lock effects").push("current error"),
         )
         .is_some());
         assert_eq!(
@@ -5335,23 +5445,19 @@ agentsview running at http://127.0.0.1:18082
         let effects = std::sync::Mutex::new(Vec::new());
 
         let admit_fallback = |generation, port| {
-            with_current_startup(&state, generation, || {
-                if triggered.swap(true, Ordering::SeqCst) {
-                    return;
-                }
+            run_startup_fallback_once(&state, generation, &triggered, || {
                 effects
                     .lock()
                     .expect("lock effects")
                     .push(format!("open http://{HOST}:{port}"));
             })
-            .is_some()
         };
 
         assert!(!admit_fallback(1, 8080));
         assert!(!triggered.load(Ordering::SeqCst));
         assert!(admit_fallback(2, 64673));
         assert!(triggered.load(Ordering::SeqCst));
-        assert!(admit_fallback(2, 64673));
+        assert!(!admit_fallback(2, 64673));
         assert_eq!(
             *effects.lock().expect("lock effects"),
             vec!["open http://127.0.0.1:64673"]
@@ -5369,17 +5475,24 @@ agentsview running at http://127.0.0.1:18082
         *state.next_generation.lock().expect("lock generation") = 2;
         let startup_handled = AtomicBool::new(false);
 
-        assert!(handle_sidecar_terminated(&state, &startup_handled, 2));
+        assert!(handle_sidecar_terminated(&state, &startup_handled, 1));
         assert_eq!(
             state
                 .backend_port
                 .lock()
                 .expect("lock backend port")
                 .to_owned(),
-            None
+            Some(64673)
         );
-        assert!(sidecar_generation_terminated(&state, 2));
-        assert!(!handle_sidecar_terminated(&state, &startup_handled, 2));
+        assert_eq!(
+            *state
+                .active_generation
+                .lock()
+                .expect("lock active generation"),
+            Some(2)
+        );
+        assert!(sidecar_generation_terminated(&state, 1));
+        assert!(!handle_sidecar_terminated(&state, &startup_handled, 1));
     }
 
     #[test]
@@ -5421,15 +5534,15 @@ agentsview running at http://127.0.0.1:18082
     }
 
     #[test]
-    fn startup_generation_detached() {
+    fn launcher_terminated_after_startup_preserves_port() {
         let state = SidecarState::default();
-        set_sidecar_port(&state, Some(18080));
+        set_sidecar_port(&state, Some(49167));
         *state
             .active_generation
             .lock()
-            .expect("lock active_generation") = Some(1);
+            .expect("lock active_generation") = Some(7);
 
-        handle_launcher_terminated_after_startup(&state, 1);
+        handle_launcher_terminated_after_startup(&state, 7);
 
         assert_eq!(
             state
@@ -5437,7 +5550,7 @@ agentsview running at http://127.0.0.1:18082
                 .lock()
                 .expect("lock backend_port after launcher terminated")
                 .to_owned(),
-            Some(18080)
+            Some(49167)
         );
         assert_eq!(
             state
@@ -5447,7 +5560,7 @@ agentsview running at http://127.0.0.1:18082
                 .to_owned(),
             None
         );
-        assert!(sidecar_generation_terminated(&state, 1));
+        assert!(sidecar_generation_terminated(&state, 7));
     }
 
     #[test]
