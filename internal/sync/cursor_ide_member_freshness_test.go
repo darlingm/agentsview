@@ -417,3 +417,33 @@ func TestCursorIDELegacyRowsFallBackToContainerParse(t *testing.T) {
 	require.NoError(t, engine.SyncPathsContext(t.Context(), []string{dbPath}))
 	assert.Equal(t, int64(1), before.since().parses)
 }
+
+func TestCursorIDEWatcherEventSkipsTrashedAndDeletedComposers(t *testing.T) {
+	root, dbPath, composers := seedCursorIDEFreshness(t, 20)
+	createCursorIDEItemTable(t, dbPath)
+	engine, database := newCursorIDESyncEngine(t, root)
+	require.Equal(t, len(composers), engine.SyncAll(t.Context(), nil).Synced)
+	trashed, deleted := composers[2], composers[4]
+	require.NoError(t, database.SoftDeleteSession(t.Context(), cursorIDESessionID(trashed)))
+	require.NoError(t, database.DeleteSession(t.Context(), cursorIDESessionID(deleted)))
+
+	writeCursorIDEItem(t, dbPath, "workbench.state")
+	before := readCursorIDECounters()
+	require.NoError(t, engine.SyncPathsContext(t.Context(), []string{dbPath}))
+	assert.Zero(t, before.since().parses, "a permanently deleted composer must not be parsed")
+
+	edited := appendCursorIDEReply(trashed, 1782029000000)
+	cursorIDEExec(t, dbPath, func(tx *sql.Tx) error {
+		return putCursorIDEComposer(t, tx, edited)
+	})
+	before = readCursorIDECounters()
+	require.NoError(t, engine.SyncPathsContext(t.Context(), []string{dbPath}))
+	assert.Zero(t, before.since().parses, "a trashed composer must not be parsed")
+	sess, err := database.GetSessionFull(t.Context(), cursorIDESessionID(trashed))
+	require.NoError(t, err)
+	require.NotNil(t, sess)
+	assert.NotNil(t, sess.DeletedAt, "the composer stays trashed")
+	gone, err := database.GetSessionFull(t.Context(), cursorIDESessionID(deleted))
+	require.NoError(t, err)
+	assert.Nil(t, gone)
+}

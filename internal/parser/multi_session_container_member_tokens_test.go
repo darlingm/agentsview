@@ -151,12 +151,26 @@ func TestMultiSessionChangedPathMemberTokens(t *testing.T) {
 		removeDB    bool
 		absent      map[string]bool
 		storedPaths []string
+		stored      func(f memberTokenFixture) []StoredMemberFreshness
 		want        func(f memberTokenFixture) []string
 	}{
 		{
 			name: "only changed members",
 			want: func(f memberTokenFixture) []string {
 				return []string{f.path("b"), f.path("c"), f.path("d"), f.path("e")}
+			},
+		},
+		{
+			name: "suppressed members omitted whatever their token",
+			stored: func(f memberTokenFixture) []StoredMemberFreshness {
+				return []StoredMemberFreshness{
+					{Path: f.path("a"), FingerprintHash: "ok:t-a"},
+					{Path: f.path("b"), FingerprintHash: "ok:old", Suppressed: true},
+					{Path: f.path("c"), Suppressed: true},
+				}
+			},
+			want: func(f memberTokenFixture) []string {
+				return []string{f.path("d"), f.path("e")}
 			},
 		},
 		{
@@ -232,6 +246,8 @@ func TestMultiSessionChangedPathMemberTokens(t *testing.T) {
 				req.StoredMemberFreshnessPage = errPager
 			case tt.emptyStored:
 				req.StoredMemberFreshnessPage = memoryFreshnessPager(nil, 0)
+			case tt.stored != nil:
+				req.StoredMemberFreshnessPage = memoryFreshnessPager(tt.stored(f), 0)
 			default:
 				req.StoredMemberFreshnessPage = memoryFreshnessPager(storedRows(f), 0)
 			}
@@ -280,7 +296,7 @@ func TestStoredMemberFreshnessCursorLookup(t *testing.T) {
 		{Path: "c#1", CoveredThroughNS: 100},
 		{Path: "c#2", CoveredThroughNS: 100},
 		{Path: "c#4", CoveredThroughNS: 100},
-		{Path: "c#5", CoveredThroughNS: 100},
+		{Path: "c#5", CoveredThroughNS: 100, Suppressed: true},
 	}
 	cursor := storedMemberFreshnessCursor{pager: memoryFreshnessPager(rows, 2)}
 	ctx := t.Context()
@@ -319,6 +335,7 @@ func TestStoredMemberFreshnessCursorLookup(t *testing.T) {
 		{"c#1", 99, true},
 		{"c#2", 100, true},
 		{"c#4", 101, false},
+		{"c#5", 101, true},
 		{"c#6", 0, false},
 	} {
 		c := storedMemberFreshnessCursor{pager: memoryFreshnessPager(rows, 2)}

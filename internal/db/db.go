@@ -522,8 +522,10 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // timestamps. Re-parse unchanged state.vscdb containers to correct started_at.)
 // (116: Cursor IDE stored hashes carry a composer-document digest ahead of the
 // full content digest, which the watcher compares to skip unchanged
-// composers. Re-parse unchanged state.vscdb containers so every stored row
-// carries it; until then the watcher parses the whole container.)
+// composers. The bump reparses the whole archive once, which rewrites every
+// live Cursor IDE row to the new hash; until then the watcher parses the
+// whole container. Trashed rows keep their old hash and are vouched as
+// suppressed.)
 const dataVersion = 116
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"

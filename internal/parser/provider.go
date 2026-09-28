@@ -915,6 +915,8 @@ type StoredMemberFreshness struct {
 	// opaque to the caller; providers that compare a change token instead of
 	// a watermark read it. An empty value never vouches for a member.
 	FingerprintHash string
+	// Suppressed means the archive refuses writes for this member (trashed or permanently deleted), so a changed-path listing omits it whatever its token or watermark.
+	Suppressed bool
 }
 
 // StoredMemberFreshnessPager returns stored freshness rows strictly after

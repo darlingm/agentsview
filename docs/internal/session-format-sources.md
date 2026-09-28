@@ -1766,11 +1766,13 @@ schemas keep their existing ordering behavior.
   Cursor IDE is retired through stored-source-hint tombstones on `state.vscdb`
   change events and through complete-container ownership reconciliation. A
   `state.vscdb` watcher event hashes each composer's `composerData` document
-  and parses only composers whose hash differs from the archived one. Edits
-  confined to bubble rows, composers whose value became NULL, malformed, or
-  headerless, and a replacement database whose composer documents are
-  byte-identical wait for the 15-minute scheduled reconciliation, which
-  reparses the whole database whenever its container fingerprint moved.
+  and parses only composers whose hash differs from the archived one; chats
+  trashed or permanently deleted in agentsview are skipped. Edits confined to
+  bubble rows, composers whose value became NULL or headerless, and a
+  replacement database whose composer documents are byte-identical wait for
+  the 15-minute scheduled reconciliation, which reparses the whole database
+  whenever its container fingerprint moved. A malformed `composerData` value
+  fails that scheduled pass until it is fixed.
 
 ## Amp (`amp`)
 

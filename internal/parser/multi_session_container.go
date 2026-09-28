@@ -729,6 +729,9 @@ func (s multiSessionContainerSourceSet) changedTokenMembers(
 			if err != nil {
 				return err
 			}
+			if ok && row.Suppressed {
+				return nil
+			}
 			if ok {
 				if stored, usable := s.cfg.storedMemberToken(row.FingerprintHash); usable && stored == member.Token {
 					return nil

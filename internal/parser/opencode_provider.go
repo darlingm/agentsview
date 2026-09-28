@@ -1411,6 +1411,9 @@ func (c *storedMemberFreshnessCursor) covers(
 	if err != nil || !ok {
 		return false, err
 	}
+	if row.Suppressed {
+		return true, nil
+	}
 	return watermarkNS <= row.CoveredThroughNS, nil
 }
 
