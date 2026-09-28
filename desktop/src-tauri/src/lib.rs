@@ -792,9 +792,9 @@ fn dock_mode_checked(app: &App) -> bool {
 fn launch_backend(app: &mut App) -> Result<(), DynError> {
     let window = main_window(app)?;
     let handle = app.handle().clone();
+    let generation = reserve_startup_generation(&handle.state::<SidecarState>())?;
     let (rx, child) = spawn_sidecar(&handle)?;
-
-    let generation = save_sidecar(&handle, child)?;
+    save_sidecar(&handle, child, generation)?;
 
     let focus_window = window.clone();
     let focus_handle = app.handle().clone();
@@ -819,8 +819,9 @@ fn launch_backend(app: &mut App) -> Result<(), DynError> {
 
 fn launch_backend_from_handle(handle: &AppHandle) -> Result<(), DynError> {
     let window = main_window_from_handle(handle)?;
+    let generation = reserve_startup_generation(&handle.state::<SidecarState>())?;
     let (rx, child) = spawn_sidecar(handle)?;
-    let generation = save_sidecar(handle, child)?;
+    save_sidecar(handle, child, generation)?;
     forward_sidecar_logs(rx, window, generation);
     Ok(())
 }
@@ -1367,14 +1368,18 @@ where
     Some(PathBuf::from(combined))
 }
 
-fn save_sidecar(app: &AppHandle, child: CommandChild) -> Result<u64, DynError> {
+fn save_sidecar(app: &AppHandle, child: CommandChild, generation: u64) -> Result<(), DynError> {
     let state = app.state::<SidecarState>();
-    register_startup_generation(&state, |generation| {
+    let mut child = Some(child);
+    let result = with_current_startup(&state, generation, || {
         let mut guard = state
             .child
             .lock()
             .map_err(|_| io::Error::other("sidecar state lock poisoned"))?;
-        *guard = Some(SidecarProcess { child, generation });
+        *guard = Some(SidecarProcess {
+            child: child.take().expect("reserved sidecar child"),
+            generation,
+        });
         if let Ok(mut active_generation) = state.active_generation.lock() {
             *active_generation = Some(generation);
         }
@@ -1384,6 +1389,25 @@ fn save_sidecar(app: &AppHandle, child: CommandChild) -> Result<u64, DynError> {
         if let Ok(mut restart_generation) = state.restart_after_stop_timeout_generation.lock() {
             *restart_generation = None;
         }
+        Ok(())
+    });
+    match result {
+        Some(result) => result,
+        None => {
+            if let Some(child) = child {
+                let _ = child.kill();
+            }
+            Err(io::Error::other("sidecar launch superseded before registration").into())
+        }
+    }
+}
+
+fn reserve_startup_generation(state: &SidecarState) -> Result<u64, DynError> {
+    register_startup_generation(state, |generation| {
+        *state
+            .backend_port
+            .lock()
+            .map_err(|_| io::Error::other("sidecar port lock poisoned"))? = None;
         Ok(generation)
     })
 }
@@ -5295,6 +5319,39 @@ agentsview running at http://127.0.0.1:18082
         assert_eq!(*effects.lock().expect("lock effects"), vec!["A"]);
         assert!(with_current_startup(&state, 1, || ()).is_none());
         assert!(with_current_startup(&state, 2, || ()).is_some());
+    }
+
+    #[test]
+    fn startup_reservation_invalidates_old_port_before_spawn_finishes() {
+        let state = std::sync::Arc::new(SidecarState::default());
+        let first = reserve_startup_generation(&state).expect("reserve first launch");
+        set_sidecar_port(&state, Some(8080));
+        let (reserved_sender, reserved_receiver) = std::sync::mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+        let replacement_state = state.clone();
+        let replacement = thread::spawn(move || {
+            let current =
+                reserve_startup_generation(&replacement_state).expect("reserve replacement");
+            reserved_sender.send(current).expect("signal reservation");
+            release_receiver.recv().expect("finish simulated spawn");
+            current
+        });
+
+        let current = reserved_receiver.recv().expect("wait for reservation");
+        assert_eq!(*state.backend_port.lock().expect("lock port"), None);
+        assert!(complete_startup_result(&state, first, 8080, false, |_| (), |_| ()).is_none());
+        assert!(!apply_startup_port_result(
+            &state,
+            first,
+            8080,
+            || (),
+            || ()
+        ));
+        assert_eq!(*state.backend_port.lock().expect("lock port"), None);
+        assert!(with_current_startup(&state, first, || ()).is_none());
+        assert!(with_current_startup(&state, current, || ()).is_some());
+        release_sender.send(()).expect("release simulated spawn");
+        assert_eq!(replacement.join().expect("join replacement"), current);
     }
 
     #[test]
