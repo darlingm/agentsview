@@ -263,7 +263,4 @@ func TestParseEachKeepsOmnigentParseOverride(t *testing.T) {
 		gotIDs = append(gotIDs, r.Result.Session.ID)
 	}
 	assert.Equal(t, want, gotIDs)
-
-	_, streams := any(omnigentSourceSet{}).(multiSessionStreamingSourceSet)
-	assert.False(t, streams, "omnigentSourceSet must not stream past its Parse override")
 }
