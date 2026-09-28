@@ -4329,11 +4329,8 @@ mod tests {
     #[test]
     fn startup_log_records_status_port_decision_and_readiness_failure() {
         let (log_sender, log_receiver) = sync_channel(DESKTOP_LOG_QUEUE_CAPACITY);
-        let log_path = tempdir()
-            .expect("tempdir")
-            .path()
-            .join("logs")
-            .join(DESKTOP_LOG_FILE_NAME);
+        let tempdir = tempdir().expect("tempdir");
+        let log_path = tempdir.path().join("logs").join(DESKTOP_LOG_FILE_NAME);
         let closed_port = {
             let listener = TcpListener::bind((HOST, 0)).expect("bind closed port");
             let port = listener.local_addr().expect("local address").port();
@@ -4383,11 +4380,8 @@ mod tests {
     #[test]
     fn wait_for_selected_backend_logs_stdout_decision_for_ready_backend() {
         let (log_sender, log_receiver) = sync_channel(DESKTOP_LOG_QUEUE_CAPACITY);
-        let log_path = tempdir()
-            .expect("tempdir")
-            .path()
-            .join("logs")
-            .join(DESKTOP_LOG_FILE_NAME);
+        let tempdir = tempdir().expect("tempdir");
+        let log_path = tempdir.path().join("logs").join(DESKTOP_LOG_FILE_NAME);
         let listener = TcpListener::bind((HOST, 0)).expect("bind ready port");
         let port = listener.local_addr().expect("local address").port();
         let server = thread::spawn(move || {
@@ -4514,7 +4508,7 @@ mod tests {
         let forward = source
             .split("fn forward_sidecar_logs(")
             .nth(1)
-            .and_then(|segment| segment.split("fn launch_backend(").next())
+            .and_then(|segment| segment.split("fn main_window(").next())
             .expect("forward function");
 
         assert!(stdout_arm.contains("\"sidecar stdout\""));
