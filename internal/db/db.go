@@ -520,7 +520,11 @@ CREATE INDEX IF NOT EXISTS idx_provider_freshness_updated_at
 // (115: Cursor IDE sessions start at their earliest timestamped bubble;
 // composerData.createdAt is only a fallback for composers without bubble
 // timestamps. Re-parse unchanged state.vscdb containers to correct started_at.)
-const dataVersion = 115
+// (116: Cursor IDE stored hashes carry a composer-document digest ahead of the
+// full content digest, which the watcher compares to skip unchanged
+// composers. Re-parse unchanged state.vscdb containers so every stored row
+// carries it; until then the watcher parses the whole container.)
+const dataVersion = 116
 
 const tokenCoverageRepairStatsKey = "token_coverage_repair_v1"
 

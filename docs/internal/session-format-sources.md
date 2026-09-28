@@ -1764,7 +1764,13 @@ schemas keep their existing ordering behavior.
   equal-length bubble rewrite, a header reorder, or a rename that leaves
   `lastUpdatedAt` untouched still reads as changed. A chat deleted inside
   Cursor IDE is retired through stored-source-hint tombstones on `state.vscdb`
-  change events and through complete-container ownership reconciliation.
+  change events and through complete-container ownership reconciliation. A
+  `state.vscdb` watcher event hashes each composer's `composerData` document
+  and parses only composers whose hash differs from the archived one. Edits
+  confined to bubble rows, composers whose value became NULL, malformed, or
+  headerless, and a replacement database whose composer documents are
+  byte-identical wait for the 15-minute scheduled reconciliation, which
+  reparses the whole database whenever its container fingerprint moved.
 
 ## Amp (`amp`)
 

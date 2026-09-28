@@ -309,6 +309,7 @@ func (e *Engine) storedMemberFreshnessPager(
 					CoveredThroughNS: storedSessionRowWatermarkNS(
 						row.VirtualContainerMemberFreshness,
 					),
+					FingerprintHash: row.Hash,
 				})
 			}
 			if done || len(rows) > 0 {
