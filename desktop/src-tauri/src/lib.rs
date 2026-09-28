@@ -792,8 +792,8 @@ fn dock_mode_checked(app: &App) -> bool {
 fn launch_backend(app: &mut App) -> Result<(), DynError> {
     let window = main_window(app)?;
     let handle = app.handle().clone();
-    let generation = reserve_startup_generation(&handle.state::<SidecarState>())?;
-    let (rx, child) = spawn_sidecar(&handle)?;
+    let ((rx, child), generation) =
+        spawn_current_sidecar(&handle.state::<SidecarState>(), || spawn_sidecar(&handle))?;
     save_sidecar(&handle, child, generation)?;
 
     let focus_window = window.clone();
@@ -819,8 +819,8 @@ fn launch_backend(app: &mut App) -> Result<(), DynError> {
 
 fn launch_backend_from_handle(handle: &AppHandle) -> Result<(), DynError> {
     let window = main_window_from_handle(handle)?;
-    let generation = reserve_startup_generation(&handle.state::<SidecarState>())?;
-    let (rx, child) = spawn_sidecar(handle)?;
+    let ((rx, child), generation) =
+        spawn_current_sidecar(&handle.state::<SidecarState>(), || spawn_sidecar(handle))?;
     save_sidecar(handle, child, generation)?;
     forward_sidecar_logs(rx, window, generation);
     Ok(())
@@ -1370,36 +1370,31 @@ where
 
 fn save_sidecar(app: &AppHandle, child: CommandChild, generation: u64) -> Result<(), DynError> {
     let state = app.state::<SidecarState>();
-    let mut child = Some(child);
-    let result = with_current_startup(&state, generation, || {
-        let mut guard = state
-            .child
-            .lock()
-            .map_err(|_| io::Error::other("sidecar state lock poisoned"))?;
-        *guard = Some(SidecarProcess {
-            child: child.take().expect("reserved sidecar child"),
-            generation,
-        });
-        if let Ok(mut active_generation) = state.active_generation.lock() {
-            *active_generation = Some(generation);
-        }
-        if let Ok(mut stopping_generation) = state.stopping_generation.lock() {
-            *stopping_generation = None;
-        }
-        if let Ok(mut restart_generation) = state.restart_after_stop_timeout_generation.lock() {
-            *restart_generation = None;
-        }
-        Ok(())
-    });
-    match result {
-        Some(result) => result,
-        None => {
-            if let Some(child) = child {
-                let _ = child.kill();
+    attach_current_sidecar(
+        &state,
+        generation,
+        child,
+        |child| {
+            let mut guard = state
+                .child
+                .lock()
+                .map_err(|_| io::Error::other("sidecar state lock poisoned"))?;
+            *guard = Some(SidecarProcess { child, generation });
+            if let Ok(mut active_generation) = state.active_generation.lock() {
+                *active_generation = Some(generation);
             }
-            Err(io::Error::other("sidecar launch superseded before registration").into())
-        }
-    }
+            if let Ok(mut stopping_generation) = state.stopping_generation.lock() {
+                *stopping_generation = None;
+            }
+            if let Ok(mut restart_generation) = state.restart_after_stop_timeout_generation.lock() {
+                *restart_generation = None;
+            }
+            Ok(())
+        },
+        |child| {
+            let _ = child.kill();
+        },
+    )
 }
 
 fn reserve_startup_generation(state: &SidecarState) -> Result<u64, DynError> {
@@ -1410,6 +1405,37 @@ fn reserve_startup_generation(state: &SidecarState) -> Result<u64, DynError> {
             .map_err(|_| io::Error::other("sidecar port lock poisoned"))? = None;
         Ok(generation)
     })
+}
+
+fn spawn_current_sidecar<T, F>(state: &SidecarState, spawn: F) -> Result<(T, u64), DynError>
+where
+    F: FnOnce() -> Result<T, DynError>,
+{
+    let generation = reserve_startup_generation(state)?;
+    Ok((spawn()?, generation))
+}
+
+fn attach_current_sidecar<T, A, K>(
+    state: &SidecarState,
+    generation: u64,
+    child: T,
+    attach: A,
+    kill: K,
+) -> Result<(), DynError>
+where
+    A: FnOnce(T) -> Result<(), DynError>,
+    K: FnOnce(T),
+{
+    let mut child = Some(child);
+    match with_current_startup(state, generation, || {
+        attach(child.take().expect("reserved sidecar child"))
+    }) {
+        Some(result) => result,
+        None => {
+            kill(child.expect("superseded sidecar child"));
+            Err(io::Error::other("sidecar launch superseded before registration").into())
+        }
+    }
 }
 
 fn register_startup_generation<T, F>(state: &SidecarState, register: F) -> Result<T, DynError>
@@ -5326,18 +5352,21 @@ agentsview running at http://127.0.0.1:18082
         let state = std::sync::Arc::new(SidecarState::default());
         let first = reserve_startup_generation(&state).expect("reserve first launch");
         set_sidecar_port(&state, Some(8080));
-        let (reserved_sender, reserved_receiver) = std::sync::mpsc::sync_channel(0);
+        let (spawning_sender, spawning_receiver) = std::sync::mpsc::sync_channel(0);
         let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
         let replacement_state = state.clone();
         let replacement = thread::spawn(move || {
-            let current =
-                reserve_startup_generation(&replacement_state).expect("reserve replacement");
-            reserved_sender.send(current).expect("signal reservation");
-            release_receiver.recv().expect("finish simulated spawn");
+            let (_, current) = spawn_current_sidecar(&replacement_state, || {
+                spawning_sender.send(()).expect("signal spawn entry");
+                release_receiver.recv().expect("finish simulated spawn");
+                Ok(())
+            })
+            .expect("spawn replacement");
             current
         });
 
-        let current = reserved_receiver.recv().expect("wait for reservation");
+        spawning_receiver.recv().expect("wait for spawn entry");
+        let current = *state.next_generation.lock().expect("lock generation");
         assert_eq!(*state.backend_port.lock().expect("lock port"), None);
         assert!(complete_startup_result(&state, first, 8080, false, |_| (), |_| ()).is_none());
         assert!(!apply_startup_port_result(
@@ -5352,6 +5381,48 @@ agentsview running at http://127.0.0.1:18082
         assert!(with_current_startup(&state, current, || ()).is_some());
         release_sender.send(()).expect("release simulated spawn");
         assert_eq!(replacement.join().expect("join replacement"), current);
+    }
+
+    #[test]
+    fn startup_spawn_failure_and_out_of_order_attachment() {
+        let state = SidecarState::default();
+        let first = reserve_startup_generation(&state).expect("reserve first launch");
+        set_sidecar_port(&state, Some(8080));
+        let failed = spawn_current_sidecar(&state, || -> Result<(), DynError> {
+            Err(io::Error::other("spawn failed").into())
+        });
+        assert!(failed.is_err());
+        assert_eq!(*state.backend_port.lock().expect("lock port"), None);
+        assert!(with_current_startup(&state, first, || ()).is_none());
+
+        let (_, superseded) = spawn_current_sidecar(&state, || Ok(1)).expect("spawn old child");
+        let (_, current) = spawn_current_sidecar(&state, || Ok(2)).expect("spawn new child");
+        let attached = std::sync::Mutex::new(Vec::new());
+        let killed = std::sync::Mutex::new(Vec::new());
+        assert!(attach_current_sidecar(
+            &state,
+            superseded,
+            1,
+            |child| {
+                attached.lock().expect("lock attached").push(child);
+                Ok(())
+            },
+            |child| killed.lock().expect("lock killed").push(child),
+        )
+        .is_err());
+        assert!(attach_current_sidecar(
+            &state,
+            current,
+            2,
+            |child| {
+                attached.lock().expect("lock attached").push(child);
+                Ok(())
+            },
+            |child| killed.lock().expect("lock killed").push(child),
+        )
+        .is_ok());
+        assert_eq!(*attached.lock().expect("lock attached"), vec![2]);
+        assert_eq!(*killed.lock().expect("lock killed"), vec![1]);
     }
 
     #[test]
