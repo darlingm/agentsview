@@ -1585,6 +1585,16 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
     let first_output = Arc::new(AtomicBool::new(false));
     let startup_output = Arc::new(Mutex::new(String::new()));
     let log_sender = spawn_sidecar_log_writer(window.app_handle().clone());
+    queue_startup_log_record(
+        &log_sender,
+        generation,
+        format!(
+            "started by desktop {} (pid {})",
+            window.app_handle().package_info().version,
+            std::process::id()
+        )
+        .as_str(),
+    );
     let timeout_window = window.clone();
     let timeout_state = startup_handled.clone();
     thread::spawn(move || {
@@ -1635,7 +1645,13 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                                 "window.__setStage(2); \
                                  window.__setStatus('Connecting to interface...');",
                             );
-                            redirect_when_ready(window.clone(), port);
+                            redirect_when_ready(
+                                window.clone(),
+                                port,
+                                generation,
+                                "sidecar stdout",
+                                log_sender.clone(),
+                            );
                         }
                     }
                 }
@@ -1694,7 +1710,11 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                             "window.__setStatus(\
                              'Waiting for background daemon to become ready...');",
                         );
-                        poll_background_status_after_launcher_exit(window.clone(), generation);
+                        poll_background_status_after_launcher_exit(
+                            window.clone(),
+                            generation,
+                            log_sender.clone(),
+                        );
                         break;
                     }
                     if handle_sidecar_terminated(&state, startup_handled.as_ref(), generation) {
@@ -1997,9 +2017,15 @@ fn recover_webview(window: &WebviewWindow, port: u16) {
     }
 }
 
-fn redirect_when_ready(window: WebviewWindow, port: u16) {
+fn redirect_when_ready(
+    window: WebviewWindow,
+    port: u16,
+    generation: u64,
+    source: &'static str,
+    log_sender: SyncSender<SidecarLogRecord>,
+) {
     thread::spawn(move || {
-        if wait_for_server(port, READY_TIMEOUT) {
+        if wait_for_selected_backend(&log_sender, generation, source, port, READY_TIMEOUT) {
             let deferred_route = take_pending_deep_link_route(window.app_handle());
             let target_url = match deferred_route.as_deref() {
                 Some(route) => {
@@ -2066,7 +2092,11 @@ fn redirect_when_ready(window: WebviewWindow, port: u16) {
     });
 }
 
-fn poll_background_status_after_launcher_exit(window: WebviewWindow, generation: u64) {
+fn poll_background_status_after_launcher_exit(
+    window: WebviewWindow,
+    generation: u64,
+    log_sender: SyncSender<SidecarLogRecord>,
+) {
     let handle = window.app_handle().clone();
     handle
         .state::<SidecarState>()
@@ -2095,7 +2125,13 @@ fn poll_background_status_after_launcher_exit(window: WebviewWindow, generation:
                         "window.__setStage(2); \
                          window.__setStatus('Connecting to interface...');",
                     );
-                    redirect_when_ready(window.clone(), port);
+                    redirect_when_ready(
+                        window.clone(),
+                        port,
+                        generation,
+                        "serve status",
+                        log_sender.clone(),
+                    );
                     return;
                 }
                 BackendStatusProbe::Starting(status) => {
@@ -2932,6 +2968,40 @@ fn try_send_sidecar_log_record(
     }
 }
 
+fn queue_startup_log_record(
+    log_sender: &SyncSender<SidecarLogRecord>,
+    generation: u64,
+    message: &str,
+) {
+    try_send_sidecar_log_record(
+        log_sender,
+        SidecarLogRecord::new("startup", format!("launch {generation}: {message}")),
+    );
+}
+
+fn wait_for_selected_backend(
+    log_sender: &SyncSender<SidecarLogRecord>,
+    generation: u64,
+    source: &str,
+    port: u16,
+    timeout: Duration,
+) -> bool {
+    queue_startup_log_record(
+        log_sender,
+        generation,
+        format!("selected port {port} from {source}").as_str(),
+    );
+    let ready = wait_for_server(port, timeout);
+    if !ready {
+        queue_startup_log_record(
+            log_sender,
+            generation,
+            format!("port {port} did not respond within {timeout:?}").as_str(),
+        );
+    }
+    ready
+}
+
 #[cfg(test)]
 fn append_sidecar_event_record_at_path(path: &Path, event: &CommandEvent) -> io::Result<()> {
     match event {
@@ -3661,6 +3731,7 @@ mod tests {
     use serde_json::Value;
     use std::collections::{HashMap, VecDeque};
     use std::fs;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     #[cfg(unix)]
     use std::os::unix::ffi::OsStrExt;
@@ -4253,6 +4324,203 @@ mod tests {
         );
         let retained = log_receiver.try_recv().expect("queued record");
         assert_eq!(retained.record, "already queued");
+    }
+
+    #[test]
+    fn startup_log_records_status_port_decision_and_readiness_failure() {
+        let (log_sender, log_receiver) = sync_channel(DESKTOP_LOG_QUEUE_CAPACITY);
+        let log_path = tempdir()
+            .expect("tempdir")
+            .path()
+            .join("logs")
+            .join(DESKTOP_LOG_FILE_NAME);
+        let closed_port = {
+            let listener = TcpListener::bind((HOST, 0)).expect("bind closed port");
+            let port = listener.local_addr().expect("local address").port();
+            drop(listener);
+            port
+        };
+        let mut stdout_buffer = String::new();
+        let mut stdout_log_buffer = String::new();
+
+        let stdout_update = prepare_sidecar_stdout_update(
+            &log_sender,
+            &mut stdout_buffer,
+            &mut stdout_log_buffer,
+            b"agentsview running at http://127.0.0.1:64673 (pid 44314)\n",
+        );
+        assert_eq!(stdout_update.port, Some(64673));
+        queue_sidecar_event_log_record(
+            &log_sender,
+            &CommandEvent::Terminated(tauri_plugin_shell::process::TerminatedPayload {
+                code: Some(0),
+                signal: None,
+            }),
+        );
+
+        assert!(!wait_for_selected_backend(
+            &log_sender,
+            1,
+            "serve status",
+            closed_port,
+            Duration::from_millis(300),
+        ));
+
+        while let Ok(record) = log_receiver.try_recv() {
+            append_sidecar_log_record_at_path(&log_path, record.label, record.record.as_str())
+                .expect("log write");
+        }
+
+        let expected = format!(
+            "[stdout] agentsview running at http://127.0.0.1:64673 (pid 44314)\n\
+[terminated] sidecar terminated (code: Some(0), signal: None)\n\
+[startup] launch 1: selected port {closed_port} from serve status\n\
+[startup] launch 1: port {closed_port} did not respond within 300ms\n"
+        );
+        assert_eq!(fs::read_to_string(log_path).expect("read log"), expected);
+    }
+
+    #[test]
+    fn wait_for_selected_backend_logs_stdout_decision_for_ready_backend() {
+        let (log_sender, log_receiver) = sync_channel(DESKTOP_LOG_QUEUE_CAPACITY);
+        let log_path = tempdir()
+            .expect("tempdir")
+            .path()
+            .join("logs")
+            .join(DESKTOP_LOG_FILE_NAME);
+        let listener = TcpListener::bind((HOST, 0)).expect("bind ready port");
+        let port = listener.local_addr().expect("local address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0; 1024];
+            stream.read(&mut request).expect("read request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"version\":\"1.0.0\",\"commit\":\"abc\",\"build_date\":\"2026-01-01T00:00:00Z\",\"api_version\":1,\"data_version\":50}",
+                )
+                .expect("write response");
+        });
+
+        assert!(wait_for_selected_backend(
+            &log_sender,
+            2,
+            "sidecar stdout",
+            port,
+            Duration::from_secs(5),
+        ));
+        server.join().expect("join server");
+
+        while let Ok(record) = log_receiver.try_recv() {
+            append_sidecar_log_record_at_path(&log_path, record.label, record.record.as_str())
+                .expect("log write");
+        }
+
+        assert_eq!(
+            fs::read_to_string(log_path).expect("read log"),
+            format!("[startup] launch 2: selected port {port} from sidecar stdout\n")
+        );
+    }
+
+    #[test]
+    fn wait_for_selected_backend_keeps_readiness_when_log_queue_is_full() {
+        let (ready_sender, ready_receiver) = sync_channel(1);
+        ready_sender
+            .send(SidecarLogRecord::new("stdout", "already queued"))
+            .expect("fill ready queue");
+        let listener = TcpListener::bind((HOST, 0)).expect("bind ready port");
+        let port = listener.local_addr().expect("local address").port();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let mut request = [0; 1024];
+            stream.read(&mut request).expect("read request");
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{\"version\":\"1.0.0\",\"commit\":\"abc\",\"build_date\":\"2026-01-01T00:00:00Z\",\"api_version\":1,\"data_version\":50}",
+                )
+                .expect("write response");
+        });
+
+        assert!(wait_for_selected_backend(
+            &ready_sender,
+            2,
+            "sidecar stdout",
+            port,
+            Duration::from_secs(5),
+        ));
+        server.join().expect("join server");
+        assert_eq!(
+            ready_receiver.try_recv().expect("queued record").record,
+            "already queued"
+        );
+        assert!(ready_receiver.try_recv().is_err());
+
+        let (closed_sender, closed_receiver) = sync_channel(1);
+        closed_sender
+            .send(SidecarLogRecord::new("stdout", "already queued"))
+            .expect("fill closed queue");
+        let closed_port = {
+            let listener = TcpListener::bind((HOST, 0)).expect("bind closed port");
+            let port = listener.local_addr().expect("local address").port();
+            drop(listener);
+            port
+        };
+        assert!(!wait_for_selected_backend(
+            &closed_sender,
+            3,
+            "serve status",
+            closed_port,
+            Duration::from_millis(300),
+        ));
+        assert_eq!(
+            closed_receiver
+                .try_recv()
+                .expect("queued closed record")
+                .record,
+            "already queued"
+        );
+        assert!(closed_receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn startup_port_decisions_log_launch_and_source() {
+        let source = include_str!("lib.rs");
+        let stdout_arm = source
+            .split("CommandEvent::Stdout(chunk_bytes) => {")
+            .nth(1)
+            .and_then(|segment| {
+                segment
+                    .split("CommandEvent::Stderr(line_bytes) => {")
+                    .next()
+            })
+            .expect("stdout arm");
+        let status_arm = source
+            .split("BackendStatusProbe::Ready(port) => {")
+            .nth(1)
+            .and_then(|segment| {
+                segment
+                    .split("BackendStatusProbe::Starting(status) => {")
+                    .next()
+            })
+            .expect("status arm");
+        let redirect = source
+            .split("fn redirect_when_ready(")
+            .nth(1)
+            .and_then(|segment| {
+                segment
+                    .split("fn poll_background_status_after_launcher_exit(")
+                    .next()
+            })
+            .expect("redirect function");
+        let forward = source
+            .split("fn forward_sidecar_logs(")
+            .nth(1)
+            .and_then(|segment| segment.split("fn launch_backend(").next())
+            .expect("forward function");
+
+        assert!(stdout_arm.contains("\"sidecar stdout\""));
+        assert!(status_arm.contains("\"serve status\""));
+        assert!(redirect.contains("wait_for_selected_backend("));
+        assert!(forward.contains("started by desktop"));
     }
 
     #[test]
