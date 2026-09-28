@@ -699,7 +699,7 @@ func (s multiSessionContainerSourceSet) changedPathTombstones(ctx context.Contex
 // hash. listed=false keeps the whole-container source: no listing seam or
 // stored authority, a member or removal event, a missing container, an
 // empty stored side (the complete parse reconciles membership), or a failed
-// listing or pager.
+// listing or pager. Suppressed rows alone count as an empty stored side.
 func (s multiSessionContainerSourceSet) changedTokenMembers(
 	ctx context.Context, root string, match multiSessionMatch,
 	req ChangedPathRequest,
@@ -710,17 +710,9 @@ func (s multiSessionContainerSourceSet) changedTokenMembers(
 		!IsRegularFile(match.Container) {
 		return nil, false, nil
 	}
-	rows, done, err := req.StoredMemberFreshnessPage(
-		ctx, "", storedMemberFreshnessPageSize,
-	)
-	if err != nil || len(rows) == 0 {
+	cursor, found, err := firstUnsuppressedStoredPage(ctx, req.StoredMemberFreshnessPage)
+	if err != nil || !found {
 		return nil, false, ctx.Err()
-	}
-	cursor := storedMemberFreshnessCursor{
-		pager: req.StoredMemberFreshnessPage,
-		rows:  rows,
-		after: rows[len(rows)-1].Path,
-		done:  done,
 	}
 	var sources []SourceRef
 	err = s.cfg.memberTokens(ctx, match.toSource(root),
@@ -748,6 +740,39 @@ func (s multiSessionContainerSourceSet) changedTokenMembers(
 		return nil, false, ctx.Err()
 	}
 	return sources, true, nil
+}
+
+// firstUnsuppressedStoredPage pages the stored side, one page at a time, until
+// a row that is not Suppressed turns up. It returns a cursor positioned at the
+// start of the stored side, reusing the first page when that page holds one.
+func firstUnsuppressedStoredPage(
+	ctx context.Context, pager StoredMemberFreshnessPager,
+) (storedMemberFreshnessCursor, bool, error) {
+	after := ""
+	for {
+		rows, done, err := pager(ctx, after, storedMemberFreshnessPageSize)
+		if err != nil {
+			return storedMemberFreshnessCursor{}, false, err
+		}
+		for _, row := range rows {
+			if row.Suppressed {
+				continue
+			}
+			if after != "" {
+				return storedMemberFreshnessCursor{pager: pager}, true, nil
+			}
+			return storedMemberFreshnessCursor{
+				pager: pager,
+				rows:  rows,
+				after: rows[len(rows)-1].Path,
+				done:  done,
+			}, true, nil
+		}
+		if done || len(rows) == 0 {
+			return storedMemberFreshnessCursor{}, false, nil
+		}
+		after = rows[len(rows)-1].Path
+	}
 }
 
 func (s multiSessionContainerSourceSet) batchMemberPresence(ctx context.Context,

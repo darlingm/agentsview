@@ -152,6 +152,7 @@ func TestMultiSessionChangedPathMemberTokens(t *testing.T) {
 		absent      map[string]bool
 		storedPaths []string
 		stored      func(f memberTokenFixture) []StoredMemberFreshness
+		pageSize    int
 		want        func(f memberTokenFixture) []string
 	}{
 		{
@@ -171,6 +172,31 @@ func TestMultiSessionChangedPathMemberTokens(t *testing.T) {
 			},
 			want: func(f memberTokenFixture) []string {
 				return []string{f.path("d"), f.path("e")}
+			},
+		},
+		{
+			name: "only suppressed rows across pages keeps container",
+			stored: func(f memberTokenFixture) []StoredMemberFreshness {
+				var rows []StoredMemberFreshness
+				for _, id := range []string{"a", "b", "c"} {
+					rows = append(rows, StoredMemberFreshness{Path: f.path(id), Suppressed: true})
+				}
+				return rows
+			},
+			pageSize: 2,
+			want:     func(f memberTokenFixture) []string { return []string{f.dbPath} },
+		},
+		{
+			name: "unsuppressed row past a suppressed page merges from the start",
+			stored: func(f memberTokenFixture) []StoredMemberFreshness {
+				return []StoredMemberFreshness{
+					{Path: f.path("a"), Suppressed: true},
+					{Path: f.path("b"), FingerprintHash: "ok:t-b"},
+				}
+			},
+			pageSize: 1,
+			want: func(f memberTokenFixture) []string {
+				return []string{f.path("c"), f.path("d"), f.path("e")}
 			},
 		},
 		{
@@ -247,7 +273,7 @@ func TestMultiSessionChangedPathMemberTokens(t *testing.T) {
 			case tt.emptyStored:
 				req.StoredMemberFreshnessPage = memoryFreshnessPager(nil, 0)
 			case tt.stored != nil:
-				req.StoredMemberFreshnessPage = memoryFreshnessPager(tt.stored(f), 0)
+				req.StoredMemberFreshnessPage = memoryFreshnessPager(tt.stored(f), tt.pageSize)
 			default:
 				req.StoredMemberFreshnessPage = memoryFreshnessPager(storedRows(f), 0)
 			}

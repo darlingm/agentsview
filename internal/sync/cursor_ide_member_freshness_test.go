@@ -368,6 +368,10 @@ func TestCursorIDELegacyRowsFallBackToContainerParse(t *testing.T) {
 	createCursorIDEItemTable(t, dbPath)
 	engine, database := newCursorIDESyncEngine(t, root)
 	require.Equal(t, len(composers), engine.SyncAll(t.Context(), nil).Synced)
+	// Suppressed rows alone must not stand in for stored authority.
+	trashed, deleted := composers[9], composers[11]
+	require.NoError(t, database.SoftDeleteSession(t.Context(), cursorIDESessionID(trashed)))
+	require.NoError(t, database.DeleteSession(t.Context(), cursorIDESessionID(deleted)))
 
 	current := strconv.Itoa(db.CurrentDataVersion())
 	previous := strconv.Itoa(db.CurrentDataVersion() - 1)
@@ -393,8 +397,14 @@ func TestCursorIDELegacyRowsFallBackToContainerParse(t *testing.T) {
 	})
 	before := readCursorIDECounters()
 	require.NoError(t, engine.SyncPathsContext(t.Context(), []string{dbPath}))
-	assert.Equal(t, int64(len(composers)), before.since().parses)
+	delta := before.since()
+	assert.Equal(t, int64(len(composers)), delta.parses)
+	// The container parse digests each composer once; member sources would digest twice (fingerprint and parse).
+	assert.Equal(t, int64(len(composers)), delta.digests, "the pass must take the whole-container source")
 	for _, c := range composers {
+		if c.id == trashed.id || c.id == deleted.id {
+			continue
+		}
 		id := cursorIDESessionID(c)
 		assert.Equal(t, db.CurrentDataVersion(), database.GetSessionDataVersion(t.Context(), id), c.id)
 		sess, err := database.GetSessionFull(t.Context(), id)
@@ -426,11 +436,19 @@ func TestCursorIDEWatcherEventSkipsTrashedAndDeletedComposers(t *testing.T) {
 	trashed, deleted := composers[2], composers[4]
 	require.NoError(t, database.SoftDeleteSession(t.Context(), cursorIDESessionID(trashed)))
 	require.NoError(t, database.DeleteSession(t.Context(), cursorIDESessionID(deleted)))
+	// A trashed row is never rewritten, so it keeps an older version and a pre-cide1 hash.
+	require.NoError(t, database.Update(t.Context(), func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(t.Context(),
+			`UPDATE sessions SET data_version = ?, file_hash = ? WHERE id = ?`,
+			db.CurrentDataVersion()-1, "0123456789abcdef", cursorIDESessionID(trashed),
+		)
+		return err
+	}))
 
 	writeCursorIDEItem(t, dbPath, "workbench.state")
 	before := readCursorIDECounters()
 	require.NoError(t, engine.SyncPathsContext(t.Context(), []string{dbPath}))
-	assert.Zero(t, before.since().parses, "a permanently deleted composer must not be parsed")
+	assert.Zero(t, before.since().parses, "trashed and permanently deleted composers must not be parsed")
 
 	edited := appendCursorIDEReply(trashed, 1782029000000)
 	cursorIDEExec(t, dbPath, func(tx *sql.Tx) error {
