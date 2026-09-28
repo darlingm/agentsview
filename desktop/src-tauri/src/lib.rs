@@ -9,7 +9,7 @@ use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver as StdReceiver, SyncSender, TrySendError};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -85,8 +85,9 @@ struct SidecarState {
     active_update_stop_waiters: AtomicUsize,
     terminated_generation: Mutex<u64>,
     termination: Condvar,
-    next_generation: AtomicU64,
-    background_status_poll_generation: AtomicU64,
+    // Lock order: generation before child, backend, and deep-link locks.
+    // Keep the lock while admitting an immediate startup effect.
+    next_generation: Mutex<u64>,
 }
 
 struct SidecarProcess {
@@ -294,6 +295,7 @@ pub fn run() {
                             "AgentsView could not start",
                             "The local backend failed to launch.",
                             err.to_string().as_str(),
+                            None,
                         );
                     } else {
                         schedule_auto_update_check(app.handle().clone());
@@ -320,6 +322,7 @@ pub fn run() {
                         "AgentsView could not verify the archive",
                         "The database compatibility check failed, so the backend was not started.",
                         message.as_str(),
+                        None,
                     );
                 }
             }
@@ -1366,7 +1369,12 @@ where
 
 fn save_sidecar(app: &AppHandle, child: CommandChild) -> Result<u64, DynError> {
     let state = app.state::<SidecarState>();
-    let generation = state.next_generation.fetch_add(1, Ordering::SeqCst) + 1;
+    let mut generation_guard = state
+        .next_generation
+        .lock()
+        .map_err(|_| io::Error::other("sidecar generation lock poisoned"))?;
+    *generation_guard += 1;
+    let generation = *generation_guard;
     let mut guard = state
         .child
         .lock()
@@ -1384,12 +1392,31 @@ fn save_sidecar(app: &AppHandle, child: CommandChild) -> Result<u64, DynError> {
     Ok(generation)
 }
 
-fn save_sidecar_port(app: &AppHandle, port: u16) {
+fn with_current_startup<T, F>(state: &SidecarState, generation: u64, apply: F) -> Option<T>
+where
+    F: FnOnce() -> T,
+{
+    let guard = state.next_generation.lock().ok()?;
+    if *guard != generation {
+        return None;
+    }
+    Some(apply())
+}
+
+fn startup_generation_is_current(app: &AppHandle, generation: u64) -> bool {
+    let state = app.state::<SidecarState>();
+    with_current_startup(&state, generation, || ()).is_some()
+}
+
+fn save_sidecar_port(app: &AppHandle, generation: u64, port: u16) -> bool {
     // Defer before publishing so a deep link cannot observe the new
     // port and navigate ahead of the pending readiness redirect.
-    defer_deep_link_dispatch(app);
     let state = app.state::<SidecarState>();
-    set_sidecar_port(&state, Some(port));
+    with_current_startup(&state, generation, || {
+        defer_deep_link_dispatch(app);
+        set_sidecar_port(&state, Some(port));
+    })
+    .is_some()
 }
 
 fn clear_sidecar_port(app: &AppHandle) {
@@ -1596,15 +1623,19 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
         .as_str(),
     );
     let timeout_window = window.clone();
+    let timeout_handle = window.app_handle().clone();
     let timeout_state = startup_handled.clone();
     thread::spawn(move || {
         thread::sleep(READY_TIMEOUT);
-        if !timeout_state.load(Ordering::SeqCst) {
-            let _ = timeout_window.eval(
-                "window.__setStatus(\
-                 'AgentsView backend is still starting. Large migrations or initial syncs can take several minutes.');",
-            );
-        }
+        let state = timeout_handle.state::<SidecarState>();
+        let _ = with_current_startup(&state, generation, || {
+            if !timeout_state.load(Ordering::SeqCst) {
+                let _ = timeout_window.eval(
+                    "window.__setStatus(\
+                     'AgentsView backend is still starting. Large migrations or initial syncs can take several minutes.');",
+                );
+            }
+        });
     });
 
     tauri::async_runtime::spawn(async move {
@@ -1627,32 +1658,40 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                         stdout_update.redacted_chunk.as_str(),
                     );
                     if !startup_handled.load(Ordering::SeqCst) {
-                        if !first_output.swap(true, Ordering::SeqCst) {
-                            let _ = window.eval(
-                                "window.__setStage(1); \
-                                 window.__setStatus('Starting database and syncing sessions...');",
-                            );
-                        }
-                        if let Some(status) = stdout_update.status {
-                            let escaped = status.replace('\\', "\\\\").replace('\'', "\\'");
-                            let _ =
-                                window.eval(format!("window.__setStatus('{escaped}');").as_str());
-                        }
-                        if let Some(port) = stdout_update.port {
-                            save_sidecar_port(window.app_handle(), port);
-                            startup_handled.store(true, Ordering::SeqCst);
-                            let _ = window.eval(
-                                "window.__setStage(2); \
-                                 window.__setStatus('Connecting to interface...');",
-                            );
-                            redirect_when_ready(
-                                window.clone(),
+                        let accepted_port = stdout_update.port.map(|port| {
+                            (
                                 port,
-                                generation,
-                                "sidecar stdout",
-                                log_sender.clone(),
-                            );
-                        }
+                                save_sidecar_port(window.app_handle(), generation, port),
+                            )
+                        });
+                        let state = window.app_handle().state::<SidecarState>();
+                        let _ = with_current_startup(&state, generation, || {
+                            if !first_output.swap(true, Ordering::SeqCst) {
+                                let _ = window.eval(
+                                    "window.__setStage(1); \
+                                     window.__setStatus('Starting database and syncing sessions...');",
+                                );
+                            }
+                            if let Some(status) = stdout_update.status.as_deref() {
+                                let escaped = status.replace('\\', "\\\\").replace('\'', "\\'");
+                                let _ = window
+                                    .eval(format!("window.__setStatus('{escaped}');").as_str());
+                            }
+                            if let Some((port, true)) = accepted_port {
+                                startup_handled.store(true, Ordering::SeqCst);
+                                let _ = window.eval(
+                                    "window.__setStage(2); \
+                                     window.__setStatus('Connecting to interface...');",
+                                );
+                                redirect_when_ready(
+                                    window.clone(),
+                                    port,
+                                    generation,
+                                    "sidecar stdout",
+                                    log_sender.clone(),
+                                );
+                            }
+                        });
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {
@@ -1704,17 +1743,22 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                         break;
                     }
                     if payload.code == Some(0) {
-                        startup_handled.store(true, Ordering::SeqCst);
                         handle_launcher_terminated_after_startup(&state, generation);
-                        let _ = window.eval(
-                            "window.__setStatus(\
-                             'Waiting for background daemon to become ready...');",
-                        );
-                        poll_background_status_after_launcher_exit(
-                            window.clone(),
-                            generation,
-                            log_sender.clone(),
-                        );
+                        let admitted = with_current_startup(&state, generation, || {
+                            startup_handled.store(true, Ordering::SeqCst);
+                            let _ = window.eval(
+                                "window.__setStatus(\
+                                 'Waiting for background daemon to become ready...');",
+                            );
+                        })
+                        .is_some();
+                        if admitted {
+                            poll_background_status_after_launcher_exit(
+                                window.clone(),
+                                generation,
+                                log_sender.clone(),
+                            );
+                        }
                         break;
                     }
                     if handle_sidecar_terminated(&state, startup_handled.as_ref(), generation) {
@@ -1727,6 +1771,7 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                                 recent_startup_output(&startup_output).as_str(),
                             )
                             .as_str(),
+                            Some(generation),
                         );
                     }
                     let restart_after_stop_timeout =
@@ -1755,6 +1800,7 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                                 recent_startup_output(&startup_output).as_str(),
                             )
                             .as_str(),
+                            Some(generation),
                         );
                     }
                 }
@@ -1783,11 +1829,18 @@ fn main_window_from_handle(handle: &AppHandle) -> Result<WebviewWindow, DynError
         .ok_or_else(|| io::Error::other("missing main window").into())
 }
 
-fn spawn_startup_error_render(window: WebviewWindow, title: &str, message: &str, detail: &str) {
+fn spawn_startup_error_render(
+    window: WebviewWindow,
+    title: &str,
+    message: &str,
+    detail: &str,
+    generation: Option<u64>,
+) {
     let title = title.to_string();
     let message = message.to_string();
     let detail = detail.to_string();
     let footer = startup_failure_footer(window.app_handle());
+    let handle = window.app_handle().clone();
     thread::spawn(move || {
         let script = startup_error_script(
             title.as_str(),
@@ -1797,7 +1850,19 @@ fn spawn_startup_error_render(window: WebviewWindow, title: &str, message: &str,
         );
         let deadline = Instant::now() + READY_TIMEOUT;
         while Instant::now() < deadline {
-            if window.eval(script.as_str()).is_ok() {
+            let rendered = match generation {
+                Some(generation) => {
+                    let state = handle.state::<SidecarState>();
+                    match with_current_startup(&state, generation, || {
+                        window.eval(script.as_str()).is_ok()
+                    }) {
+                        Some(rendered) => rendered,
+                        None => return,
+                    }
+                }
+                None => window.eval(script.as_str()).is_ok(),
+            };
+            if rendered {
                 return;
             }
             thread::sleep(READY_POLL_INTERVAL);
@@ -2017,6 +2082,26 @@ fn recover_webview(window: &WebviewWindow, port: u16) {
     }
 }
 
+fn complete_startup_result<T, Ready, Timeout>(
+    state: &SidecarState,
+    generation: u64,
+    ready: bool,
+    on_ready: Ready,
+    on_timeout: Timeout,
+) -> Option<T>
+where
+    Ready: FnOnce() -> T,
+    Timeout: FnOnce() -> T,
+{
+    with_current_startup(state, generation, || {
+        if ready {
+            on_ready()
+        } else {
+            on_timeout()
+        }
+    })
+}
+
 fn redirect_when_ready(
     window: WebviewWindow,
     port: u16,
@@ -2025,69 +2110,85 @@ fn redirect_when_ready(
     log_sender: SyncSender<SidecarLogRecord>,
 ) {
     thread::spawn(move || {
-        if wait_for_selected_backend(&log_sender, generation, source, port, READY_TIMEOUT) {
-            let deferred_route = take_pending_deep_link_route(window.app_handle());
-            let target_url = match deferred_route.as_deref() {
-                Some(route) => {
-                    log_deep_link_event(
-                        window.app_handle(),
-                        format!("redirecting to deferred deep link route {route}").as_str(),
-                    );
-                    desktop_route_url(port, route)
-                }
-                None => desktop_redirect_url(port),
-            };
-            // Failures after a deferred route was consumed go to the
-            // desktop log: packaged builds discard stderr, and the
-            // "redirecting" line above would otherwise read as success.
-            match Url::parse(target_url.as_str()) {
-                Ok(url) => {
-                    if let Err(err) = window.navigate(url) {
+        let ready = wait_for_selected_backend(&log_sender, generation, source, port, READY_TIMEOUT);
+        let handle = window.app_handle().clone();
+        let state = handle.state::<SidecarState>();
+        let ready_handle = handle.clone();
+        let ready_window = window.clone();
+        let timeout_window = window;
+        let _ = complete_startup_result(
+            &state,
+            generation,
+            ready,
+            move || {
+                let deferred_route = take_pending_deep_link_route(&ready_handle);
+                let target_url = match deferred_route.as_deref() {
+                    Some(route) => {
+                        log_deep_link_event(
+                            &ready_handle,
+                            format!("redirecting to deferred deep link route {route}").as_str(),
+                        );
+                        desktop_route_url(port, route)
+                    }
+                    None => desktop_redirect_url(port),
+                };
+                // Failures after a deferred route was consumed go to the
+                // desktop log: packaged builds discard stderr, and the
+                // "redirecting" line above would otherwise read as success.
+                match Url::parse(target_url.as_str()) {
+                    Ok(url) => {
+                        if let Err(err) = ready_window.navigate(url) {
+                            if deferred_route.is_some() {
+                                log_deep_link_event(
+                                    &ready_handle,
+                                    format!("deferred deep link navigation failed: {err}").as_str(),
+                                );
+                            } else {
+                                eprintln!("[agentsview] navigate failed: {err}");
+                            }
+                        }
+                        // On Linux a failed WebKitGTK GPU/EGL init aborts the
+                        // web content process, leaving a blank window while the
+                        // backend keeps serving. Detect that and fall back to
+                        // the system browser. See
+                        // https://github.com/kenn-io/agentsview/issues/635
+                        #[cfg(target_os = "linux")]
+                        spawn_webview_health_fallback(ready_window.clone(), port, generation);
+                    }
+                    Err(err) => {
                         if deferred_route.is_some() {
                             log_deep_link_event(
-                                window.app_handle(),
-                                format!("deferred deep link navigation failed: {err}").as_str(),
+                                &ready_handle,
+                                format!(
+                                    "invalid deferred deep link redirect URL {target_url}: {err}"
+                                )
+                                .as_str(),
                             );
                         } else {
-                            eprintln!("[agentsview] navigate failed: {err}");
+                            eprintln!("[agentsview] invalid redirect URL: {err}");
                         }
                     }
-                    // On Linux a failed WebKitGTK GPU/EGL init aborts the
-                    // web content process, leaving a blank window while the
-                    // backend keeps serving. Detect that and fall back to
-                    // the system browser. See
-                    // https://github.com/kenn-io/agentsview/issues/635
-                    #[cfg(target_os = "linux")]
-                    spawn_webview_health_fallback(window.clone(), port);
                 }
-                Err(err) => {
-                    if deferred_route.is_some() {
-                        log_deep_link_event(
-                            window.app_handle(),
-                            format!("invalid deferred deep link redirect URL {target_url}: {err}")
-                                .as_str(),
-                        );
-                    } else {
-                        eprintln!("[agentsview] invalid redirect URL: {err}");
-                    }
-                }
-            }
-            if let Some(route) = finish_deep_link_redirect(window.app_handle()) {
-                log_deep_link_event(
-                    window.app_handle(),
-                    format!("navigating to deep link route {route} queued during startup redirect")
+                if let Some(route) = finish_deep_link_redirect(&ready_handle) {
+                    log_deep_link_event(
+                        &ready_handle,
+                        format!(
+                            "navigating to deep link route {route} queued during startup redirect"
+                        )
                         .as_str(),
+                    );
+                    navigate_main_window_to_route(&ready_handle, port, route.as_str());
+                }
+            },
+            move || {
+                spawn_startup_error_render(
+                    timeout_window,
+                    "AgentsView interface did not respond",
+                    "The backend reported a port, but the desktop window could not connect to it.",
+                    format!("Backend URL: {}", desktop_redirect_url(port)).as_str(),
+                    Some(generation),
                 );
-                navigate_main_window_to_route(window.app_handle(), port, route.as_str());
-            }
-            return;
-        }
-
-        spawn_startup_error_render(
-            window,
-            "AgentsView interface did not respond",
-            "The backend reported a port, but the desktop window could not connect to it.",
-            format!("Backend URL: {}", desktop_redirect_url(port)).as_str(),
+            },
         );
     });
 }
@@ -2098,10 +2199,6 @@ fn poll_background_status_after_launcher_exit(
     log_sender: SyncSender<SidecarLogRecord>,
 ) {
     let handle = window.app_handle().clone();
-    handle
-        .state::<SidecarState>()
-        .background_status_poll_generation
-        .store(generation, Ordering::SeqCst);
     tauri::async_runtime::spawn(async move {
         let started = Instant::now();
         let mut failed_status_probes = 0;
@@ -2109,7 +2206,7 @@ fn poll_background_status_after_launcher_exit(
         let mut long_startup_notice_shown = false;
         let mut unhealthy_since: Option<Instant> = None;
         loop {
-            if !background_status_poll_is_current(&handle, generation) {
+            if !startup_generation_is_current(&handle, generation) {
                 return;
             }
             let status = probe_backend_status(&handle).await;
@@ -2117,21 +2214,27 @@ fn poll_background_status_after_launcher_exit(
                 next_background_status_poll_attempts(&status, status_poll_backoff_attempts);
             match status {
                 BackendStatusProbe::Ready(port) => {
-                    if !background_status_poll_is_current(&handle, generation) {
+                    if !save_sidecar_port(&handle, generation, port) {
                         return;
                     }
-                    save_sidecar_port(&handle, port);
-                    let _ = window.eval(
-                        "window.__setStage(2); \
-                         window.__setStatus('Connecting to interface...');",
-                    );
-                    redirect_when_ready(
-                        window.clone(),
-                        port,
-                        generation,
-                        "serve status",
-                        log_sender.clone(),
-                    );
+                    let state = handle.state::<SidecarState>();
+                    if with_current_startup(&state, generation, || {
+                        let _ = window.eval(
+                            "window.__setStage(2); \
+                             window.__setStatus('Connecting to interface...');",
+                        );
+                        redirect_when_ready(
+                            window.clone(),
+                            port,
+                            generation,
+                            "serve status",
+                            log_sender.clone(),
+                        );
+                    })
+                    .is_none()
+                    {
+                        return;
+                    }
                     return;
                 }
                 BackendStatusProbe::Starting(status) => {
@@ -2139,7 +2242,11 @@ fn poll_background_status_after_launcher_exit(
                     unhealthy_since = None;
                     if !long_startup_notice_shown && !status.trim().is_empty() {
                         let escaped = status.replace('\\', "\\\\").replace('\'', "\\'");
-                        let _ = window.eval(format!("window.__setStatus('{escaped}');").as_str());
+                        let state = handle.state::<SidecarState>();
+                        let _ = with_current_startup(&state, generation, || {
+                            let _ =
+                                window.eval(format!("window.__setStatus('{escaped}');").as_str());
+                        });
                     }
                 }
                 BackendStatusProbe::Unhealthy(status) => {
@@ -2155,13 +2262,17 @@ fn poll_background_status_after_launcher_exit(
                                 status.as_str(),
                             )
                             .as_str(),
+                            Some(generation),
                         );
                         return;
                     }
-                    let _ = window.eval(
-                        "window.__setStatus(\
-                         'AgentsView found a backend process, but health checks are not responding yet.');",
-                    );
+                    let state = handle.state::<SidecarState>();
+                    let _ = with_current_startup(&state, generation, || {
+                        let _ = window.eval(
+                            "window.__setStatus(\
+                             'AgentsView found a backend process, but health checks are not responding yet.');",
+                        );
+                    });
                 }
                 BackendStatusProbe::NotRunning(status) => {
                     spawn_startup_error_render(
@@ -2173,6 +2284,7 @@ fn poll_background_status_after_launcher_exit(
                             status.as_str(),
                         )
                         .as_str(),
+                        Some(generation),
                     );
                     return;
                 }
@@ -2182,6 +2294,7 @@ fn poll_background_status_after_launcher_exit(
                         "AgentsView backend is incompatible",
                         "AgentsView found a running backend that this desktop app cannot use.",
                         status.as_str(),
+                        Some(generation),
                     );
                     return;
                 }
@@ -2195,6 +2308,7 @@ fn poll_background_status_after_launcher_exit(
                             status.as_str(),
                         )
                         .as_str(),
+                        Some(generation),
                     );
                     return;
                 }
@@ -2208,6 +2322,7 @@ fn poll_background_status_after_launcher_exit(
                             status.as_str(),
                         )
                         .as_str(),
+                        Some(generation),
                     );
                     return;
                 }
@@ -2226,23 +2341,30 @@ fn poll_background_status_after_launcher_exit(
                                 "",
                             )
                             .as_str(),
+                            Some(generation),
                         );
                         return;
                     }
                     if failed_status_probes == STATUS_PROBE_FAILURE_NOTICE_AFTER {
-                        let _ = window.eval(
-                            "window.__setStatus(\
-                             'Waiting for background daemon status. Check serve.log if this persists.');",
-                        );
+                        let state = handle.state::<SidecarState>();
+                        let _ = with_current_startup(&state, generation, || {
+                            let _ = window.eval(
+                                "window.__setStatus(\
+                                 'Waiting for background daemon status. Check serve.log if this persists.');",
+                            );
+                        });
                     }
                 }
             }
             if !long_startup_notice_shown && started.elapsed() >= DAEMON_STARTUP_LONG_NOTICE_AFTER {
                 long_startup_notice_shown = true;
-                let _ = window.eval(
-                    "window.__setStatus(\
-                     'AgentsView is still preparing the local archive. Large migrations or full resyncs can take many minutes.');",
-                );
+                let state = handle.state::<SidecarState>();
+                let _ = with_current_startup(&state, generation, || {
+                    let _ = window.eval(
+                        "window.__setStatus(\
+                         'AgentsView is still preparing the local archive. Large migrations or full resyncs can take many minutes.');",
+                    );
+                });
             }
             tokio::time::sleep(background_status_poll_interval(
                 status_poll_backoff_attempts,
@@ -2250,14 +2372,6 @@ fn poll_background_status_after_launcher_exit(
             .await;
         }
     });
-}
-
-fn background_status_poll_is_current(handle: &AppHandle, generation: u64) -> bool {
-    handle
-        .state::<SidecarState>()
-        .background_status_poll_generation
-        .load(Ordering::SeqCst)
-        == generation
 }
 
 fn background_status_poll_interval(backoff_attempts: u32) -> Duration {
@@ -2401,7 +2515,7 @@ fn combined_probe_output(stdout: &str, stderr: &str) -> String {
 /// user where the UI went. If no browser can be opened the window stays
 /// visible and the dialog shows the URL to open manually.
 #[cfg(target_os = "linux")]
-fn spawn_webview_health_fallback(window: WebviewWindow, port: u16) {
+fn spawn_webview_health_fallback(window: WebviewWindow, port: u16, generation: u64) {
     // One-shot guard so focus/navigation retries can't open many tabs.
     static FALLBACK_TRIGGERED: AtomicBool = AtomicBool::new(false);
 
@@ -2413,46 +2527,49 @@ fn spawn_webview_health_fallback(window: WebviewWindow, port: u16) {
         if window.eval("void 0").is_ok() {
             return;
         }
-        if FALLBACK_TRIGGERED.swap(true, Ordering::SeqCst) {
-            return;
-        }
-
-        let url = format!("http://{HOST}:{port}");
-        eprintln!(
-            "[agentsview] WebView content process is not responding \
-             (likely a GPU/EGL initialization failure); opening {url} \
-             in the system browser instead"
-        );
-
         let handle = window.app_handle().clone();
-        match handle.opener().open_url(url.as_str(), Option::<&str>::None) {
-            Ok(()) => {
-                let _ = window.hide();
-                handle
-                    .dialog()
-                    .message(format!(
-                        "AgentsView could not render its window, likely due to a \
-                         graphics driver (EGL) issue. It has been opened in your \
-                         web browser instead:\n\n{url}"
-                    ))
-                    .title("AgentsView")
-                    .show(|_| {});
+        let state = handle.state::<SidecarState>();
+        let _ = with_current_startup(&state, generation, || {
+            if FALLBACK_TRIGGERED.swap(true, Ordering::SeqCst) {
+                return;
             }
-            Err(err) => {
-                eprintln!("[agentsview] failed to open system browser fallback: {err}");
-                // Keep the window up so the app stays visible and quittable.
-                handle
-                    .dialog()
-                    .message(format!(
-                        "AgentsView could not render its window, likely due to a \
-                         graphics driver (EGL) issue, and no web browser could be \
-                         opened automatically. Open this URL in a browser to use \
-                         AgentsView:\n\n{url}"
-                    ))
-                    .title("AgentsView")
-                    .show(|_| {});
+
+            let url = format!("http://{HOST}:{port}");
+            eprintln!(
+                "[agentsview] WebView content process is not responding \
+                 (likely a GPU/EGL initialization failure); opening {url} \
+                 in the system browser instead"
+            );
+
+            match handle.opener().open_url(url.as_str(), Option::<&str>::None) {
+                Ok(()) => {
+                    let _ = window.hide();
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "AgentsView could not render its window, likely due to a \
+                             graphics driver (EGL) issue. It has been opened in your \
+                             web browser instead:\n\n{url}"
+                        ))
+                        .title("AgentsView")
+                        .show(|_| {});
+                }
+                Err(err) => {
+                    eprintln!("[agentsview] failed to open system browser fallback: {err}");
+                    // Keep the window up so the app stays visible and quittable.
+                    handle
+                        .dialog()
+                        .message(format!(
+                            "AgentsView could not render its window, likely due to a \
+                             graphics driver (EGL) issue, and no web browser could be \
+                             opened automatically. Open this URL in a browser to use \
+                             AgentsView:\n\n{url}"
+                        ))
+                        .title("AgentsView")
+                        .show(|_| {});
+                }
             }
-        }
+        });
     });
 }
 
@@ -5028,6 +5145,244 @@ agentsview running at http://127.0.0.1:18082
     }
 
     #[test]
+    fn startup_generation_stale_timeout() {
+        let state = SidecarState::default();
+        *state.next_generation.lock().expect("lock generation") = 1;
+        let effects = std::sync::Mutex::new(Vec::new());
+
+        assert!(complete_startup_result(
+            &state,
+            1,
+            false,
+            || effects.lock().expect("lock effects").push("ready"),
+            || effects.lock().expect("lock effects").push("old timeout"),
+        )
+        .is_some());
+
+        *state.next_generation.lock().expect("lock generation") = 2;
+        assert!(complete_startup_result(
+            &state,
+            1,
+            false,
+            || effects.lock().expect("lock effects").push("ready"),
+            || effects.lock().expect("lock effects").push("stale timeout"),
+        )
+        .is_none());
+        assert_eq!(*effects.lock().expect("lock effects"), vec!["old timeout"]);
+    }
+
+    #[test]
+    fn startup_generation_owner() {
+        let state = std::sync::Arc::new(SidecarState::default());
+        *state.next_generation.lock().expect("lock generation") = 1;
+        let (entered_sender, entered_receiver) = std::sync::mpsc::sync_channel(0);
+        let (release_sender, release_receiver) = std::sync::mpsc::sync_channel(0);
+        let effects = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let first_effects = effects.clone();
+        let first_state = state.clone();
+        let first = thread::spawn(move || {
+            with_current_startup(&first_state, 1, || {
+                entered_sender.send(()).expect("signal admitted effect");
+                release_receiver.recv().expect("release admitted effect");
+                first_effects.lock().expect("lock effects").push("A");
+            })
+            .expect("generation A admitted");
+        });
+
+        entered_receiver.recv().expect("wait for admitted effect");
+        let replacement_state = state.clone();
+        let replacement = thread::spawn(move || {
+            let mut generation = replacement_state
+                .next_generation
+                .lock()
+                .expect("lock replacement generation");
+            *generation = 2;
+        });
+        assert!(effects.lock().expect("lock effects").is_empty());
+        release_sender.send(()).expect("release generation A");
+        first.join().expect("join generation A");
+        replacement.join().expect("join generation B");
+        assert_eq!(*effects.lock().expect("lock effects"), vec!["A"]);
+        assert!(with_current_startup(&state, 1, || ()).is_none());
+        assert!(with_current_startup(&state, 2, || ()).is_some());
+    }
+
+    #[test]
+    fn startup_generation_readiness() {
+        let state = SidecarState::default();
+        *state.next_generation.lock().expect("lock generation") = 1;
+        let mut dispatch =
+            DeepLinkDispatch::Deferred(Some("/sessions/synthetic-latest?msg=9".to_string()));
+        let effects = std::sync::Mutex::new(Vec::new());
+
+        *state.next_generation.lock().expect("replace generation") = 2;
+        assert!(complete_startup_result(
+            &state,
+            1,
+            true,
+            || {
+                let route = dispatch.take_pending().expect("stale route");
+                effects
+                    .lock()
+                    .expect("lock effects")
+                    .push(format!("A:8080:{route}"));
+            },
+            || effects
+                .lock()
+                .expect("lock effects")
+                .push("A timeout".to_string()),
+        )
+        .is_none());
+        assert!(matches!(
+            &dispatch,
+            DeepLinkDispatch::Deferred(Some(route)) if route == "/sessions/synthetic-latest?msg=9"
+        ));
+        assert!(effects.lock().expect("lock effects").is_empty());
+
+        assert!(complete_startup_result(
+            &state,
+            2,
+            true,
+            || {
+                let route = dispatch.take_pending().expect("current route");
+                effects
+                    .lock()
+                    .expect("lock effects")
+                    .push(format!("B:64673:{route}"));
+            },
+            || effects
+                .lock()
+                .expect("lock effects")
+                .push("B timeout".to_string()),
+        )
+        .is_some());
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["B:64673:/sessions/synthetic-latest?msg=9"]
+        );
+    }
+
+    #[test]
+    fn startup_generation_port() {
+        let state = SidecarState::default();
+        let mut stdout_buffer = String::new();
+        let stdout_port = parse_listening_port_from_stdout_buffer(
+            &mut stdout_buffer,
+            "agentsview running at http://127.0.0.1:8080\n",
+        );
+        assert_eq!(stdout_port, Some(8080));
+        assert_eq!(
+            classify_backend_status_output(
+                "agentsview running at http://127.0.0.1:64673 (pid 123)\n  mode: writable\n",
+                ""
+            ),
+            BackendStatusProbe::Ready(64673)
+        );
+
+        let backend_port = std::sync::Mutex::new(None);
+        *state.next_generation.lock().expect("lock generation") = 2;
+        assert!(with_current_startup(&state, 1, || {
+            *backend_port.lock().expect("lock backend port") = stdout_port;
+        })
+        .is_none());
+        assert_eq!(*backend_port.lock().expect("lock backend port"), None);
+        assert!(with_current_startup(&state, 2, || {
+            *backend_port.lock().expect("lock backend port") = Some(64673);
+        })
+        .is_some());
+        assert_eq!(
+            *backend_port.lock().expect("lock backend port"),
+            Some(64673)
+        );
+    }
+
+    #[test]
+    fn startup_generation_deferred() {
+        let state = SidecarState::default();
+        *state.next_generation.lock().expect("lock generation") = 2;
+        let effects = std::sync::Mutex::new(Vec::new());
+
+        assert!(complete_startup_result(
+            &state,
+            1,
+            false,
+            || effects.lock().expect("lock effects").push("ready"),
+            || effects.lock().expect("lock effects").push("error"),
+        )
+        .is_none());
+        assert!(effects.lock().expect("lock effects").is_empty());
+
+        let state_for_retry = state;
+        assert!(complete_startup_result(
+            &state_for_retry,
+            2,
+            false,
+            || effects.lock().expect("lock effects").push("ready"),
+            || effects.lock().expect("lock effects").push("current error"),
+        )
+        .is_some());
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["current error"]
+        );
+    }
+
+    #[test]
+    fn startup_generation_linux_fallback() {
+        let state = SidecarState::default();
+        *state.next_generation.lock().expect("lock generation") = 2;
+        let triggered = AtomicBool::new(false);
+        let effects = std::sync::Mutex::new(Vec::new());
+
+        let admit_fallback = |generation, port| {
+            with_current_startup(&state, generation, || {
+                if triggered.swap(true, Ordering::SeqCst) {
+                    return;
+                }
+                effects
+                    .lock()
+                    .expect("lock effects")
+                    .push(format!("open http://{HOST}:{port}"));
+            })
+            .is_some()
+        };
+
+        assert!(!admit_fallback(1, 8080));
+        assert!(!triggered.load(Ordering::SeqCst));
+        assert!(admit_fallback(2, 64673));
+        assert!(triggered.load(Ordering::SeqCst));
+        assert!(admit_fallback(2, 64673));
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["open http://127.0.0.1:64673"]
+        );
+    }
+
+    #[test]
+    fn startup_generation_current() {
+        let state = SidecarState::default();
+        set_sidecar_port(&state, Some(64673));
+        *state
+            .active_generation
+            .lock()
+            .expect("lock active generation") = Some(2);
+        *state.next_generation.lock().expect("lock generation") = 2;
+        let startup_handled = AtomicBool::new(false);
+
+        assert!(handle_sidecar_terminated(&state, &startup_handled, 2));
+        assert_eq!(
+            state
+                .backend_port
+                .lock()
+                .expect("lock backend port")
+                .to_owned(),
+            None
+        );
+        assert!(sidecar_generation_terminated(&state, 2));
+        assert!(!handle_sidecar_terminated(&state, &startup_handled, 2));
+    }
+
+    #[test]
     fn handle_sidecar_terminated_clears_port_and_marks_startup() {
         let state = SidecarState::default();
         set_sidecar_port(&state, Some(18080));
@@ -5066,7 +5421,7 @@ agentsview running at http://127.0.0.1:18082
     }
 
     #[test]
-    fn launcher_terminated_after_startup_preserves_port() {
+    fn startup_generation_detached() {
         let state = SidecarState::default();
         set_sidecar_port(&state, Some(18080));
         *state
