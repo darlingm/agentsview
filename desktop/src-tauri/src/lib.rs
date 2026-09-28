@@ -1441,22 +1441,23 @@ where
     .unwrap_or(false)
 }
 
-fn publish_sidecar_port<F>(state: &SidecarState, generation: u64, port: u16, defer: F) -> bool
+fn apply_startup_port_result<D, A>(
+    state: &SidecarState,
+    generation: u64,
+    port: u16,
+    defer: D,
+    after_publish: A,
+) -> bool
 where
-    F: FnOnce(),
+    D: FnOnce(),
+    A: FnOnce(),
 {
     with_current_startup(state, generation, || {
         defer();
         set_sidecar_port(state, Some(port));
+        after_publish();
     })
     .is_some()
-}
-
-fn save_sidecar_port(app: &AppHandle, generation: u64, port: u16) -> bool {
-    // Defer before publishing so a deep link cannot observe the new
-    // port and navigate ahead of the pending readiness redirect.
-    let state = app.state::<SidecarState>();
-    publish_sidecar_port(&state, generation, port, || defer_deep_link_dispatch(app))
 }
 
 fn clear_sidecar_port(app: &AppHandle) {
@@ -1696,14 +1697,8 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                         stdout_update.redacted_chunk.as_str(),
                     );
                     if !startup_handled.load(Ordering::SeqCst) {
-                        let accepted_port = stdout_update.port.map(|port| {
-                            (
-                                port,
-                                save_sidecar_port(window.app_handle(), generation, port),
-                            )
-                        });
                         let state = window.app_handle().state::<SidecarState>();
-                        let _ = with_current_startup(&state, generation, || {
+                        let show_initial_output = || {
                             if !first_output.swap(true, Ordering::SeqCst) {
                                 let _ = window.eval(
                                     "window.__setStage(1); \
@@ -1715,21 +1710,32 @@ fn forward_sidecar_logs(mut rx: CommandRx, window: WebviewWindow, generation: u6
                                 let _ = window
                                     .eval(format!("window.__setStatus('{escaped}');").as_str());
                             }
-                            if let Some((port, true)) = accepted_port {
-                                startup_handled.store(true, Ordering::SeqCst);
-                                let _ = window.eval(
-                                    "window.__setStage(2); \
+                        };
+                        if let Some(port) = stdout_update.port {
+                            let _ = apply_startup_port_result(
+                                &state,
+                                generation,
+                                port,
+                                || defer_deep_link_dispatch(window.app_handle()),
+                                || {
+                                    show_initial_output();
+                                    startup_handled.store(true, Ordering::SeqCst);
+                                    let _ = window.eval(
+                                        "window.__setStage(2); \
                                      window.__setStatus('Connecting to interface...');",
-                                );
-                                redirect_when_ready(
-                                    window.clone(),
-                                    port,
-                                    generation,
-                                    "sidecar stdout",
-                                    log_sender.clone(),
-                                );
-                            }
-                        });
+                                    );
+                                    redirect_when_ready(
+                                        window.clone(),
+                                        port,
+                                        generation,
+                                        "sidecar stdout",
+                                        log_sender.clone(),
+                                    );
+                                },
+                            );
+                        } else {
+                            let _ = with_current_startup(&state, generation, show_initial_output);
+                        }
                     }
                 }
                 CommandEvent::Stderr(line_bytes) => {
@@ -1886,27 +1892,42 @@ fn spawn_startup_error_render(
             detail.as_str(),
             footer.as_str(),
         );
-        let deadline = Instant::now() + READY_TIMEOUT;
-        while Instant::now() < deadline {
-            let rendered = match generation {
-                Some(generation) => {
-                    let state = handle.state::<SidecarState>();
-                    match with_current_startup(&state, generation, || {
-                        window.eval(script.as_str()).is_ok()
-                    }) {
-                        Some(rendered) => rendered,
-                        None => return,
-                    }
-                }
-                None => window.eval(script.as_str()).is_ok(),
-            };
-            if rendered {
-                return;
-            }
-            thread::sleep(READY_POLL_INTERVAL);
+        let state = handle.state::<SidecarState>();
+        if render_startup_error_until(
+            &state,
+            generation,
+            Instant::now() + READY_TIMEOUT,
+            || window.eval(script.as_str()).is_ok(),
+            || thread::sleep(READY_POLL_INTERVAL),
+        ) == Some(false)
+        {
+            eprintln!("[agentsview] timed out waiting to render startup error");
         }
-        eprintln!("[agentsview] timed out waiting to render startup error");
     });
+}
+
+fn render_startup_error_until<F, W>(
+    state: &SidecarState,
+    generation: Option<u64>,
+    deadline: Instant,
+    mut render: F,
+    mut wait: W,
+) -> Option<bool>
+where
+    F: FnMut() -> bool,
+    W: FnMut(),
+{
+    while Instant::now() < deadline {
+        let rendered = match generation {
+            Some(generation) => with_current_startup(state, generation, &mut render)?,
+            None => render(),
+        };
+        if rendered {
+            return Some(true);
+        }
+        wait();
+    }
+    Some(false)
 }
 
 fn startup_error_script(title: &str, message: &str, detail: &str, footer: &str) -> String {
@@ -2254,25 +2275,26 @@ fn poll_background_status_after_launcher_exit(
                 next_background_status_poll_attempts(&status, status_poll_backoff_attempts);
             match status {
                 BackendStatusProbe::Ready(port) => {
-                    if !save_sidecar_port(&handle, generation, port) {
-                        return;
-                    }
                     let state = handle.state::<SidecarState>();
-                    if with_current_startup(&state, generation, || {
-                        let _ = window.eval(
-                            "window.__setStage(2); \
-                             window.__setStatus('Connecting to interface...');",
-                        );
-                        redirect_when_ready(
-                            window.clone(),
-                            port,
-                            generation,
-                            "serve status",
-                            log_sender.clone(),
-                        );
-                    })
-                    .is_none()
-                    {
+                    if !apply_startup_port_result(
+                        &state,
+                        generation,
+                        port,
+                        || defer_deep_link_dispatch(&handle),
+                        || {
+                            let _ = window.eval(
+                                "window.__setStage(2); \
+                                 window.__setStatus('Connecting to interface...');",
+                            );
+                            redirect_when_ready(
+                                window.clone(),
+                                port,
+                                generation,
+                                "serve status",
+                                log_sender.clone(),
+                            );
+                        },
+                    ) {
                         return;
                     }
                     return;
@@ -5349,91 +5371,134 @@ agentsview running at http://127.0.0.1:18082
             BackendStatusProbe::Ready(64673)
         );
 
-        let deferred = AtomicUsize::new(0);
+        let effects = std::sync::Mutex::new(Vec::new());
         *state.next_generation.lock().expect("lock generation") = 2;
-        assert!(!publish_sidecar_port(
+        assert!(!apply_startup_port_result(
             &state,
             1,
             stdout_port.unwrap(),
-            || {
-                deferred.fetch_add(1, Ordering::SeqCst);
-            }
+            || effects.lock().expect("lock effects").push("defer"),
+            || effects.lock().expect("lock effects").push("redirect"),
         ));
         assert_eq!(*state.backend_port.lock().expect("lock backend port"), None);
-        assert!(publish_sidecar_port(&state, 2, 64673, || {
-            deferred.fetch_add(1, Ordering::SeqCst);
-        }));
+        assert!(effects.lock().expect("lock effects").is_empty());
+        assert!(apply_startup_port_result(
+            &state,
+            2,
+            64673,
+            || effects.lock().expect("lock effects").push("defer"),
+            || effects.lock().expect("lock effects").push("redirect"),
+        ));
         assert_eq!(
             *state.backend_port.lock().expect("lock backend port"),
             Some(64673)
         );
-        assert_eq!(deferred.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["defer", "redirect"]
+        );
     }
 
     #[test]
-    fn startup_generation_wiring() {
-        let source = include_str!("lib.rs");
-        let forward = source
-            .split("fn forward_sidecar_logs(")
-            .nth(1)
-            .and_then(|part| part.split("fn main_window(").next())
-            .expect("sidecar event consumer");
-        let redirect = source
-            .split("fn redirect_when_ready(")
-            .nth(1)
-            .and_then(|part| {
-                part.split("fn poll_background_status_after_launcher_exit(")
-                    .next()
-            })
-            .expect("readiness consumer");
-        let poll = source
-            .split("fn poll_background_status_after_launcher_exit(")
-            .nth(1)
-            .and_then(|part| part.split("fn background_status_poll_interval(").next())
-            .expect("status poll consumer");
-        let fallback = source
-            .split("fn spawn_webview_health_fallback(")
-            .nth(1)
-            .and_then(|part| part.split("fn extract_startup_status(").next())
-            .expect("Linux fallback consumer");
+    fn startup_generation_status_ready() {
+        let state = SidecarState::default();
+        let first = register_startup_generation(&state, Ok).expect("register first launch");
+        let old_status = classify_backend_status_output(
+            "agentsview running at http://127.0.0.1:8080 (pid 100)\n  mode: writable\n",
+            "",
+        );
+        let current = register_startup_generation(&state, Ok).expect("register replacement");
+        let effects = std::sync::Mutex::new(Vec::new());
+        let BackendStatusProbe::Ready(old_port) = old_status else {
+            panic!("old status should carry its port");
+        };
+        assert!(!apply_startup_port_result(
+            &state,
+            first,
+            old_port,
+            || effects.lock().expect("lock effects").push("defer old"),
+            || {
+                effects.lock().expect("lock effects").push("stage old");
+                effects.lock().expect("lock effects").push("redirect old");
+            },
+        ));
+        assert_eq!(*state.backend_port.lock().expect("lock port"), None);
+        assert!(effects.lock().expect("lock effects").is_empty());
 
-        assert!(forward.contains("save_sidecar_port(window.app_handle(), generation, port)"));
-        assert!(redirect.contains("complete_startup_result("));
-        assert!(poll.contains("save_sidecar_port(&handle, generation, port)"));
-        assert!(poll.contains("eval_if_current("));
-        assert!(fallback.contains("run_startup_fallback_once("));
+        let BackendStatusProbe::Ready(current_port) = classify_backend_status_output(
+            "agentsview running at http://127.0.0.1:49167 (pid 200)\n  mode: writable\n",
+            "",
+        ) else {
+            panic!("current status should carry its port");
+        };
+        assert!(apply_startup_port_result(
+            &state,
+            current,
+            current_port,
+            || effects.lock().expect("lock effects").push("defer current"),
+            || {
+                effects.lock().expect("lock effects").push("stage current");
+                effects
+                    .lock()
+                    .expect("lock effects")
+                    .push("redirect current");
+            },
+        ));
+        assert_eq!(*state.backend_port.lock().expect("lock port"), Some(49167));
+        assert_eq!(
+            *effects.lock().expect("lock effects"),
+            vec!["defer current", "stage current", "redirect current"]
+        );
     }
 
     #[test]
     fn startup_generation_deferred() {
         let state = SidecarState::default();
-        *state.next_generation.lock().expect("lock generation") = 2;
-        let effects = std::sync::Mutex::new(Vec::new());
-
-        assert!(complete_startup_result(
-            &state,
-            1,
-            8080,
-            false,
-            |_| effects.lock().expect("lock effects").push("ready"),
-            |_| effects.lock().expect("lock effects").push("error"),
-        )
-        .is_none());
-        assert!(effects.lock().expect("lock effects").is_empty());
-
-        let state_for_retry = state;
-        assert!(complete_startup_result(
-            &state_for_retry,
-            2,
-            49167,
-            false,
-            |_| effects.lock().expect("lock effects").push("ready"),
-            |_| effects.lock().expect("lock effects").push("current error"),
-        )
-        .is_some());
+        let first = register_startup_generation(&state, Ok).expect("register first launch");
+        let attempts = AtomicUsize::new(0);
+        let waits = AtomicUsize::new(0);
         assert_eq!(
-            *effects.lock().expect("lock effects"),
-            vec!["current error"]
+            render_startup_error_until(
+                &state,
+                Some(first),
+                Instant::now() + Duration::from_secs(1),
+                || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    false
+                },
+                || {
+                    waits.fetch_add(1, Ordering::SeqCst);
+                    register_startup_generation(&state, Ok).expect("register replacement");
+                },
+            ),
+            None
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(waits.load(Ordering::SeqCst), 1);
+
+        assert_eq!(
+            render_startup_error_until(
+                &state,
+                Some(2),
+                Instant::now() + Duration::from_secs(1),
+                || {
+                    attempts.fetch_add(1, Ordering::SeqCst);
+                    true
+                },
+                || panic!("current render should succeed"),
+            ),
+            Some(true)
+        );
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+        assert_eq!(
+            render_startup_error_until(
+                &state,
+                None,
+                Instant::now() + Duration::from_secs(1),
+                || true,
+                || panic!("prelaunch render should succeed"),
+            ),
+            Some(true)
         );
     }
 
