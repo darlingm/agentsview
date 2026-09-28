@@ -3537,12 +3537,12 @@ func mergeContainerMemberPaths(
 	}
 	merged := make([]string, 0, len(stored)+len(excluded))
 	i, j := 0, 0
-	for i < len(stored) || j < len(excluded) {
+	for i < len(stored) && j < len(excluded) {
 		switch {
-		case j == len(excluded) || (i < len(stored) && stored[i] < excluded[j]):
+		case stored[i] < excluded[j]:
 			merged = append(merged, stored[i])
 			i++
-		case i == len(stored) || excluded[j] < stored[i]:
+		case excluded[j] < stored[i]:
 			merged = append(merged, excluded[j])
 			j++
 		default:
@@ -3550,6 +3550,12 @@ func mergeContainerMemberPaths(
 			i++
 			j++
 		}
+	}
+	if i < len(stored) {
+		merged = append(merged, stored[i:]...)
+	}
+	if j < len(excluded) {
+		merged = append(merged, excluded[j:]...)
 	}
 	return merged, excludedSet
 }
