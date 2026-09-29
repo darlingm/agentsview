@@ -174,7 +174,15 @@
       };
     });
 
-    return { bars };
+    // Each day's focus and hover target spans the tallest column, so days
+    // with no messages or no user messages stay reachable.
+    const top = Math.max(0, ...bars.map((bar) => bar.value));
+    return {
+      bars: bars.map((bar) => ({
+        ...bar,
+        columnRange: [0, top] as [number, number],
+      })),
+    };
   });
   const xDomain = $derived.by((): [Date, Date] | undefined => {
     const first = chart.bars[0];
@@ -213,9 +221,7 @@
     bar: (typeof chart.bars)[number],
     segment?: "user" | "assistant" | "other",
   ): string {
-    const inSelection = selectedRange !== null &&
-      bar.date >= bucketStart(selectedRange.from) &&
-      bar.date <= bucketStart(selectedRange.to);
+    const inSelection = isSelected(bar);
     const dimmed = selectedRange !== null && !inSelection;
     return `bar${bar.total === 0 ? " empty" : ""}${inSelection ? " selected" : ""}${dimmed ? " dimmed" : ""}${segment ? ` bar-${segment}` : ""}`;
   }
@@ -244,13 +250,10 @@
     text: string;
   } | null>(null);
 
-  function handleBarHover(
-    e: MouseEvent,
+  function describeBar(
     bar: (typeof chart.bars)[number],
-  ) {
-    const rect = (
-      e.currentTarget as SVGElement
-    ).getBoundingClientRect();
+    asPercent: boolean,
+  ): string[] {
     const label = formatDateTime(`${bar.date}T00:00:00`, {
       month: "short",
       day: "numeric",
@@ -266,7 +269,7 @@
       }),
     ];
     if (metric === "messages") {
-      const split = percentScale
+      const split = asPercent
         ? splitPercent(bar)
         : {
             user: bar.userMessages.toLocaleString(getLocale()),
@@ -281,10 +284,26 @@
         }),
       );
     }
+    return lines;
+  }
+
+  function isSelected(bar: (typeof chart.bars)[number]): boolean {
+    return selectedRange !== null &&
+      bar.date >= bucketStart(selectedRange.from) &&
+      bar.date <= bucketStart(selectedRange.to);
+  }
+
+  function handleBarHover(
+    e: MouseEvent,
+    bar: (typeof chart.bars)[number],
+  ) {
+    const rect = (
+      e.currentTarget as SVGElement
+    ).getBoundingClientRect();
     tooltip = {
       x: rect.left + rect.width / 2,
       y: rect.top - 4,
-      text: lines.join(" | "),
+      text: describeBar(bar, percentScale).join(" | "),
     };
   }
 
@@ -555,70 +574,60 @@
       >
         {#snippet marks()}
           {#each chart.bars as bar, index (bar.date)}
-            {#if metric === "messages"}
+            <g
+              class="day-column"
+              role="button"
+              tabindex={0}
+              data-activity-bar-index={index}
+              aria-pressed={isSelected(bar)}
+              aria-label={describeBar(bar, false).join(", ")}
+              onpointerenter={(event) => handleBarHover(event, bar)}
+              onpointerleave={handleBarLeave}
+              onkeydown={(event) => handleBarKeydown(event, index)}
+            >
               <Bar
                 data={bar}
                 x="instant"
-                y="userRange"
+                y="columnRange"
                 radius={1}
                 insets={{ left: barInset, right: barInset }}
-                class={barClass(bar, "user")}
-                role="button"
-                tabindex={0}
-                data-activity-bar-index={index}
-                aria-pressed={selectedRange !== null && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to)}
-                aria-label={m.analytics_activity_timeline_tooltip_value({
-                  label: formatDateLabel(bar.instant),
-                  value: bar.total.toLocaleString(getLocale()),
-                  metric: m.analytics_metric_messages(),
-                })}
-                onpointerenter={(event) => handleBarHover(event, bar)}
-                onpointerleave={handleBarLeave}
-                onkeydown={(event) => handleBarKeydown(event, index)}
+                class="bar-target"
               />
-              <Bar
-                data={bar}
-                x="instant"
-                y="assistantRange"
-                radius={1}
-                insets={{ left: barInset, right: barInset }}
-                class={barClass(bar, "assistant")}
-                aria-hidden="true"
-                onpointerenter={(event) => handleBarHover(event, bar)}
-                onpointerleave={handleBarLeave}
-              />
-              <Bar
-                data={bar}
-                x="instant"
-                y="otherRange"
-                radius={1}
-                insets={{ left: barInset, right: barInset }}
-                class={barClass(bar, "other")}
-                aria-hidden="true"
-                onpointerenter={(event) => handleBarHover(event, bar)}
-                onpointerleave={handleBarLeave}
-              />
-            {:else}
-              <Bar
-                data={bar}
-                x="instant"
-                radius={1}
-                insets={{ left: barInset, right: barInset }}
-                class={barClass(bar)}
-                role="button"
-                tabindex={0}
-                data-activity-bar-index={index}
-                aria-pressed={selectedRange !== null && bar.date >= bucketStart(selectedRange.from) && bar.date <= bucketStart(selectedRange.to)}
-                aria-label={m.analytics_activity_timeline_tooltip_value({
-                  label: formatDateLabel(bar.instant),
-                  value: bar.total.toLocaleString(getLocale()),
-                  metric: m.analytics_metric_sessions(),
-                })}
-                onpointerenter={(event) => handleBarHover(event, bar)}
-                onpointerleave={handleBarLeave}
-                onkeydown={(event) => handleBarKeydown(event, index)}
-              />
-            {/if}
+              {#if metric === "messages"}
+                <Bar
+                  data={bar}
+                  x="instant"
+                  y="userRange"
+                  radius={1}
+                  insets={{ left: barInset, right: barInset }}
+                  class={barClass(bar, "user")}
+                />
+                <Bar
+                  data={bar}
+                  x="instant"
+                  y="assistantRange"
+                  radius={1}
+                  insets={{ left: barInset, right: barInset }}
+                  class={barClass(bar, "assistant")}
+                />
+                <Bar
+                  data={bar}
+                  x="instant"
+                  y="otherRange"
+                  radius={1}
+                  insets={{ left: barInset, right: barInset }}
+                  class={barClass(bar, "other")}
+                />
+              {:else}
+                <Bar
+                  data={bar}
+                  x="instant"
+                  radius={1}
+                  insets={{ left: barInset, right: barInset }}
+                  class={barClass(bar)}
+                />
+              {/if}
+            </g>
           {/each}
         {/snippet}
       </BarChart>
@@ -697,7 +706,7 @@
   .segment-legend {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-5);
     margin-left: auto;
   }
 
@@ -762,15 +771,21 @@
     fill: var(--chart-series-other);
   }
 
-  .timeline-container :global(.bar-user:focus-visible ~ .bar-assistant) {
-    opacity: 1;
+  .timeline-container :global(.day-column) {
+    outline: none;
   }
 
-  .timeline-container :global(.bar-user:focus-visible ~ .bar-other) {
-    opacity: 1;
+  .timeline-container :global(.bar-target) {
+    fill: transparent;
   }
 
-  .timeline-container :global(.bar:hover) {
+  .timeline-container :global(.day-column:focus-visible .bar-target) {
+    stroke: var(--accent-blue);
+    stroke-width: 1;
+  }
+
+  .timeline-container :global(.day-column:hover .bar),
+  .timeline-container :global(.day-column:focus-visible .bar) {
     opacity: 1;
   }
 
@@ -782,7 +797,7 @@
     opacity: 0.2;
   }
 
-  .timeline-container :global(.bar.dimmed:hover) {
+  .timeline-container :global(.day-column:hover .bar.dimmed) {
     opacity: 0.5;
   }
 

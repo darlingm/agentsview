@@ -634,7 +634,7 @@
   "analytics_total_count": "共 {countLabel} 个",
   "analytics_projects_empty": "无项目数据",
   "analytics_activity_timeline_tooltip_value": "{label}：{value} {metric}",
-  "analytics_activity_timeline_tooltip_messages": "用户：{user} / assistant：{assistant} / 其他：{other}",
+  "analytics_activity_timeline_tooltip_messages": "用户：{user} / 助手：{assistant} / 其他：{other}",
   "analytics_activity_timeline_mode_absolute": "绝对值",
   "analytics_activity_timeline_mode_percent": "百分比",
   "analytics_metric_messages": "消息",

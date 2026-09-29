@@ -273,6 +273,58 @@ describe("ActivityTimeline", () => {
     unmount(component);
   });
 
+  it("gives each day one labeled keyboard target, even without user messages", async () => {
+    analytics.from = "2026-08-01";
+    analytics.to = "2026-08-03";
+    const day = (date: string, user: number, assistant: number, messages: number) => ({
+      date,
+      sessions: 1,
+      messages,
+      user_messages: user,
+      assistant_messages: assistant,
+      tool_calls: 0,
+      thinking_messages: 0,
+      by_agent: {},
+    });
+    analytics.activity = {
+      granularity: "day",
+      series: [
+        day("2026-08-01", 2, 3, 5),
+        // Assistant-only and system-only days have no user segment.
+        day("2026-08-02", 0, 4, 4),
+        day("2026-08-03", 0, 0, 2),
+      ],
+    };
+    const onRangeSelect = vi.fn();
+
+    const component = mount(ActivityTimeline, {
+      target: document.body,
+      props: { onRangeSelect },
+    });
+    await tick();
+    await tick();
+
+    const targets = document.querySelectorAll<SVGGElement>('[role="button"]');
+    expect(targets).toHaveLength(3);
+    expect(document.querySelectorAll("[tabindex]")).toHaveLength(3);
+    for (const target of targets) {
+      expect(target.getAttribute("tabindex")).toBe("0");
+      const hit = target.querySelector<SVGRectElement>("rect.bar-target")!;
+      expect(Number(hit.getAttribute("height"))).toBeCloseTo(124);
+    }
+    const label = targets[1]!.getAttribute("aria-label")!;
+    expect(label).toContain("4");
+    expect(label).toMatch(/user: 0/);
+    expect(label).toMatch(/assistant: 4/);
+    expect(label).toMatch(/other: 0/);
+    expect(targets[2]!.getAttribute("aria-label")).toMatch(/other: 2/);
+
+    targets[1]!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(onRangeSelect).toHaveBeenCalledWith("2026-08-02", "2026-08-02");
+
+    unmount(component);
+  });
+
   it("normalizes stacked segments in Percent view to expose split trends", async () => {
     analytics.from = "2026-08-01";
     analytics.to = "2026-08-02";
