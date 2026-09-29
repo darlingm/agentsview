@@ -110,6 +110,12 @@ The latest published release is
   from the PostgreSQL server's time zone data, which matches AgentsView's for
   current time zones.
 
+**Bug fixes**
+
+- Recall no longer records work an agent only proposed as work it completed.
+  A segment in which the agent ran no tool can no longer produce a procedure
+  entry, and its prompt tells the model nothing in it was executed.
+
 ## 0.44.0
 
 <small>2026-09-21</small>
