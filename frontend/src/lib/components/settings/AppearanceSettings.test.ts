@@ -47,6 +47,7 @@ describe("AppearanceSettings", () => {
   });
 
   afterEach(() => {
+    ui.toolGroupsExpanded = true;
     ui.setZoomLevel(100);
     ui.renderUnknownXmlBlocksAsPreformatted = false;
     if (ui.highContrast) ui.toggleHighContrast();
@@ -59,6 +60,18 @@ describe("AppearanceSettings", () => {
       configurable: true,
     });
     cleanup();
+  });
+
+  it("changes the browser-local tool group default without saving server settings", async () => {
+    ui.toolGroupsExpanded = true;
+    const { getByRole } = render(AppearanceSettings);
+    const checkbox = getByRole("checkbox", { name: "Expand tool-call groups by default" });
+    expect((checkbox as HTMLInputElement).checked).toBe(true);
+    await fireEvent.click(checkbox);
+    expect(ui.toolGroupsExpanded).toBe(false);
+    expect(settingsService.putApiV1Settings).not.toHaveBeenCalled();
+    await fireEvent.click(checkbox);
+    expect(ui.toolGroupsExpanded).toBe(true);
   });
 
   it.each([false, true])("shares one Zoom selector with desktop=%s", async (isDesktop) => {
