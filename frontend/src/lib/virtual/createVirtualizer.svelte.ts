@@ -1,3 +1,4 @@
+import { untrack } from "svelte";
 import {
   Virtualizer,
   type VirtualizerOptions,
@@ -52,7 +53,8 @@ function createBaseVirtualizer<TScroll extends Element | Window, TItem extends E
     }, 0);
   }
 
-  $effect(() => {
+  // Keep the key/index mapping current before consumers update measured DOM rows.
+  $effect.pre(() => {
     const opts = optsFn();
     const willReset = opts.measureCacheKey !== lastMeasureCacheKey && instance !== undefined;
     const resolvedOpts: VirtualizerOptions<TScroll, TItem> = {
@@ -94,6 +96,12 @@ function createBaseVirtualizer<TScroll extends Element | Window, TItem extends E
     instance._willUpdate();
 
     postUpdate?.(instance, opts, cacheKeyChanged);
+    // setOptions does not necessarily emit onChange (notably at scroll zero).
+    // Publish new counts/keys so consumers recompute row ranges and positions
+    // after filtering, rather than waiting for a scroll or resize.
+    untrack(() => {
+      _version++;
+    });
 
     return () => {
       instance?._willUpdate();
