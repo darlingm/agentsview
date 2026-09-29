@@ -688,6 +688,11 @@ Consecutive tool-only assistant messages are grouped into compact "N tool calls"
 sections with a gear icon and timestamp. Click to expand individual tool blocks
 within the group.
 
+In builds from main, click an "N tool calls" heading to collapse or expand the
+group. Groups start expanded. To change this, turn off **Expand tool-call groups
+by default** under **Settings > Appearance**. The preference is saved in your
+browser. Search opens a group to reveal the current match.
+
 ![Tool call groups](/docs/assets/generated/screenshots/tool-groups.png)
 
 ### Code Blocks

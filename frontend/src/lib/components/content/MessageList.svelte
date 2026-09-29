@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteMap } from "svelte/reactivity";
   import { onDestroy, tick, untrack } from "svelte";
   import { Button, EmptyState } from "@kenn-io/kit-ui";
   // kit-ui-check-ignore: MessageList uses the local TanStack wrapper for pinned-message scroll reconciliation and per-session measurement cache resets; kit-ui VirtualList does not expose those controls yet.
@@ -14,6 +15,7 @@
   import CompactBoundaryDivider from "./CompactBoundaryDivider.svelte";
   import SystemBoundaryCard from "../system/SystemBoundaryCard.svelte";
   import ToolCallGroup from "./ToolCallGroup.svelte";
+  import type { ToolGroupDisclosure } from "./tool-group-disclosure.js";
   import type { DbMessage as Message } from "../../api/generated/index.js";
   import type { DisplayItem } from "../../utils/display-items.js";
   import {
@@ -36,6 +38,15 @@
     keepsAnswerBeforeTrailingTools,
     projectSessionScope,
   } from "../../search/session-scope.js";
+
+  // Retain manual group choices across virtual row unmounts, but not sessions
+  // or changes to the default expansion preference.
+  const toolGroupDisclosures = new SvelteMap<string, ToolGroupDisclosure>();
+  $effect(() => {
+    void sessions.activeSessionId;
+    void ui.toolGroupsExpanded;
+    toolGroupDisclosures.clear();
+  });
 
   let containerRef: HTMLDivElement | undefined = $state(undefined);
   let scrollRaf: number | null = null;
@@ -277,6 +288,17 @@
     );
     if (!row) return [];
     const rootRect = containerRef.getBoundingClientRect();
+    if (row.querySelector(".tool-group-body[hidden]")) {
+      // A collapsed header represents all its messages, just as individual
+      // collapsed tool rows do. Do not count offscreen overscan headers.
+      const header = row.querySelector<HTMLElement>(".tool-group-header");
+      const rect = header?.getBoundingClientRect();
+      if (!rect || rect.height === 0 || rect.bottom <= rootRect.top || rect.top >= rootRect.bottom) {
+        return [];
+      }
+      const item = itemAt(rowIndex);
+      return item?.kind === "tool-group" ? item.ordinals : [];
+    }
     const ordinals: number[] = [];
     for (const node of row.querySelectorAll<HTMLElement>("[data-message-ordinal]")) {
       const ordinal = Number(node.dataset.messageOrdinal);
@@ -351,6 +373,14 @@
     visibleProgressSignature = signature;
     scheduleVisibleProgress(sessionId, currentToken);
   });
+
+  function handleToolGroupToggle() {
+    const sessionId = messages.sessionId;
+    const currentToken = messages.activeSessionToken;
+    if (sessionId && currentToken) {
+      scheduleVisibleProgress(sessionId, currentToken);
+    }
+  }
 
   function scheduleVisibleProgress(
     sessionId: string,
@@ -854,6 +884,8 @@
             {/if}
             {#if item.kind === "tool-group"}
               <ToolCallGroup
+                disclosures={toolGroupDisclosures}
+                onToggle={handleToolGroupToggle}
                 messages={item.messages}
                 timestamp={item.timestamp}
                 searchable={true}
@@ -1050,7 +1082,7 @@
     display: none;
   }
 
-  .layout-skim :global(.tool-group-header),
+  /* Keep the outer group disclosure available even in skim mode. */
   .layout-skim :global(.pg-header) {
     display: none;
   }

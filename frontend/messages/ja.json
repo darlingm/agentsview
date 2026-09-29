@@ -2360,6 +2360,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "ペイロードの削除は保存済み行を書き換えます。agentsview db compact を実行するまでアーカイブファイルのサイズは変わりません。",
+  "appearance_expand_tool_groups": "ツール呼び出しグループをデフォルトで展開",
   "appearance_render_unknown_xml_blocks": "不明なXMLブロックを整形済みテキストとして表示",
   "go_to_session_title": "セッションへ移動",
   "go_to_session_input_label": "セッションIDまたはUUID",

@@ -2374,6 +2374,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "Məlumat yüklərinin silinməsi saxlanılmış sətirləri yenidən yazır. Arxiv faylının ölçüsü agentsview db compact əmrini icra edənədək dəyişmir.",
+  "appearance_expand_tool_groups": "Alət çağırışı qruplarını standart olaraq genişləndir",
   "appearance_render_unknown_xml_blocks": "Naməlum XML bloklarını əvvəlcədən formatlanmış mətn kimi göstər",
   "go_to_session_title": "Sessiyaya keç",
   "go_to_session_input_label": "Sessiya ID-si və ya UUID",

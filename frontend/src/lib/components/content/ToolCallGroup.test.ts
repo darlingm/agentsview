@@ -1,6 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vite-plus/test";
 import { sessionTiming } from "../../stores/sessionTiming.svelte.js";
+import { ui } from "../../stores/ui.svelte.js";
+import { SvelteMap } from "svelte/reactivity";
+import type { ToolGroupDisclosure } from "./tool-group-disclosure.js";
 import { mount, tick, unmount } from "svelte";
 import type { DbMessage as Message } from "../../api/generated/index.js";
 // @ts-ignore
@@ -36,10 +39,131 @@ function makeToolMessage(ordinal: number): Message {
 
 afterEach(() => {
   sessionTiming.reset();
+  ui.toolGroupsExpanded = true;
   document.body.innerHTML = "";
 });
 
 describe("ToolCallGroup", () => {
+  it("starts expanded and preserves child disclosure state when toggled", async () => {
+    const message = makeToolMessage(1);
+    const component = mount(ToolCallGroup, {
+      target: document.body,
+      props: { messages: [message], timestamp: message.timestamp },
+    });
+    await tick();
+    const header = document.querySelector<HTMLButtonElement>(".tool-group-toggle")!;
+    const body = document.querySelector<HTMLElement>(".tool-group-body")!;
+    const tool = document.querySelector<HTMLButtonElement>(".tool-header")!;
+    expect(header.getAttribute("aria-expanded")).toBe("true");
+    expect(header.getAttribute("aria-controls")).toBe(body.id);
+    expect(body.hidden).toBe(false);
+    tool.click();
+    await tick();
+    expect(tool.getAttribute("aria-expanded")).toBe("true");
+
+    header.click();
+    await tick();
+    expect(header.getAttribute("aria-expanded")).toBe("false");
+    expect(body.hidden).toBe(true);
+    expect(header.textContent).toContain("1 tool call");
+    expect(document.querySelector(".group-timestamp")).not.toBeNull();
+    // The independent copy action must not be nested inside the toggle.
+    expect(header.querySelector(".kit-copy-btn")).toBeNull();
+    expect(document.querySelector(".tool-group-header .kit-copy-btn")).not.toBeNull();
+
+    header.click();
+    await tick();
+    expect(body.hidden).toBe(false);
+    expect(tool.getAttribute("aria-expanded")).toBe("true");
+    await unmount(component);
+  });
+
+  it("starts collapsed when requested and keeps the read boundary visible", async () => {
+    ui.toolGroupsExpanded = false;
+    const message = makeToolMessage(1);
+    const component = mount(ToolCallGroup, {
+      target: document.body,
+      props: {
+        messages: [message],
+        timestamp: message.timestamp,
+        divider: { ordinal: 1, label: "New messages" },
+      },
+    });
+    await tick();
+    expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(true);
+    expect(document.querySelector(".tool-group > .read-progress-divider")?.textContent).toBe(
+      "New messages",
+    );
+    document.querySelector<HTMLButtonElement>(".tool-group-toggle")!.click();
+    await tick();
+    expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(false);
+    expect(document.querySelector(".tool-group > .read-progress-divider")).toBeNull();
+    await unmount(component);
+  });
+
+  it("retains a manual choice across virtual remounts, new calls, and sort order", async () => {
+    const disclosures = new SvelteMap<string, ToolGroupDisclosure>();
+    const first = makeToolMessage(1);
+    const props = { messages: [first], timestamp: first.timestamp, disclosures };
+    let component = mount(ToolCallGroup, { target: document.body, props });
+    await tick();
+    document.querySelector<HTMLButtonElement>(".tool-group-toggle")!.click();
+    await tick();
+    await unmount(component);
+
+    component = mount(ToolCallGroup, {
+      target: document.body,
+      props: { ...props, messages: [first, makeToolMessage(2)], sortNewestFirst: true },
+    });
+    await tick();
+    expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(true);
+    expect(document.querySelector(".group-label")?.textContent).toContain("2 tool calls");
+    await unmount(component);
+
+    const other = { ...first, session_id: "another-session" };
+    component = mount(ToolCallGroup, {
+      target: document.body,
+      props: { ...props, messages: [other] },
+    });
+    await tick();
+    expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(false);
+    await unmount(component);
+  });
+
+  it.each([true, false])(
+    "preserves manual choices when older pages extend a group (default expanded=%s)",
+    async (expanded) => {
+      ui.toolGroupsExpanded = expanded;
+      const disclosures = new SvelteMap<string, ToolGroupDisclosure>();
+      let messages = [makeToolMessage(3), makeToolMessage(4)];
+      const render = () =>
+        mount(ToolCallGroup, {
+          target: document.body,
+          props: { messages, timestamp: messages[0]!.timestamp, disclosures },
+        });
+      let component = render();
+      await tick();
+      document.querySelector<HTMLButtonElement>(".tool-group-toggle")!.click();
+      await tick();
+      await unmount(component);
+
+      messages = [makeToolMessage(2), ...messages];
+      component = render();
+      await tick();
+      expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(expanded);
+      // A new choice must replace the inherited choice before another page arrives.
+      document.querySelector<HTMLButtonElement>(".tool-group-toggle")!.click();
+      await tick();
+      await unmount(component);
+
+      messages = [makeToolMessage(1), ...messages, makeToolMessage(5)];
+      component = render();
+      await tick();
+      expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(!expanded);
+      await unmount(component);
+    },
+  );
+
   it("omits duration for legacy calls without stored timing", async () => {
     const message = makeToolMessage(1);
     message.tool_calls = [];

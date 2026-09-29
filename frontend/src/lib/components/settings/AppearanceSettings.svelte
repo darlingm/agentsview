@@ -112,6 +112,15 @@
     />
   </div>
 
+  <div class="setting-row">
+    <Checkbox
+      checked={ui.toolGroupsExpanded}
+      onchange={() => { ui.toolGroupsExpanded = !ui.toolGroupsExpanded; }}
+      ariaLabel={m.appearance_expand_tool_groups()}
+      label={m.appearance_expand_tool_groups()}
+    />
+  </div>
+
   <div class="setting-row column">
     <span class="setting-label">{m.appearance_block_visibility()}</span>
     <div class="block-toggles">

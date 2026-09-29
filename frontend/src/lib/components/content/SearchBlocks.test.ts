@@ -7,6 +7,7 @@ import { messages } from "../../stores/messages.svelte.js";
 import { ui } from "../../stores/ui.svelte.js";
 import { collectSearchBlocks } from "../../search/block-text.js";
 import { currentRangeForBlock } from "../../search/search-block.svelte.js";
+import ToolCallGroup from "./ToolCallGroup.svelte";
 import ThinkingBlock from "./ThinkingBlock.svelte";
 import ToolBlock from "./ToolBlock.svelte";
 import MessageContent from "./MessageContent.svelte";
@@ -50,6 +51,7 @@ beforeEach(() => {
   messages.sessionId = "blocks";
   messages.loading = false;
   messages.hasOlder = false;
+  ui.toolGroupsExpanded = true;
   ui.selectedOrdinal = null;
   ui.sortNewestFirst = false;
   ui.showAllBlocks();
@@ -59,11 +61,47 @@ afterEach(async () => {
   inSessionSearch.close();
   inSessionSearch.clearQuery();
   messages.clear();
+  ui.toolGroupsExpanded = true;
   document.body.replaceChildren();
   vi.useRealTimers();
 });
 
 describe("search block integration", () => {
+  it("reveals a collapsed tool group for search and respects manual collapse until navigation", async () => {
+    ui.toolGroupsExpanded = false;
+    const source = message("", {
+      has_tool_use: true,
+      tool_calls: [
+        {
+          category: "",
+          tool_name: "Read",
+          input_json: '{"file_path":"needle needle"}',
+        },
+      ],
+    });
+    await search(source);
+    components.push(
+      mount(ToolCallGroup, {
+        target: document.body,
+        props: { messages: [source], timestamp: source.timestamp, searchable: true },
+      }),
+    );
+    await tick();
+    const header = document.querySelector<HTMLButtonElement>(".tool-group-toggle")!;
+    const body = document.querySelector<HTMLElement>(".tool-group-body")!;
+    expect(body.hidden).toBe(false);
+    header.click();
+    await tick();
+    expect(body.hidden).toBe(true);
+    inSessionSearch.next();
+    await tick();
+    expect(body.hidden).toBe(false);
+    inSessionSearch.close();
+    await tick();
+    expect(body.hidden).toBe(true);
+    expect(ui.toolGroupsExpanded).toBe(false);
+  });
+
   it("opens only the current thinking block and respects manual collapse until navigation", async () => {
     const source = message("[Thinking]\nneedle needle\n[/Thinking]", { has_thinking: true });
     await search(source);
