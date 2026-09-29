@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -328,6 +329,7 @@ func startServeBackground(ctx context.Context,
 		args = serveBackgroundChildArgs(args)
 	}
 	args = serveBackgroundArgsWithNoSync(args, cfg.NoSync)
+	logOffset := backgroundServeLogSize(cfg.DataDir)
 	child, logPath, err := startServeBackgroundProcessForRun(ctx, cfg, args)
 	result.LogPath = logPath
 	if err != nil {
@@ -366,10 +368,8 @@ func startServeBackground(ctx context.Context,
 			)
 		}
 		result.errorIncludesLogPath = true
-		return result, fmt.Errorf(
-			"%s: server exited before becoming ready: %w\nLogs: %s",
-			operation, err, logPath,
-		)
+		return result, fmt.Errorf("%s: %w", operation,
+			backgroundServeExitError(err, logPath, logOffset))
 	}
 	result.Runtime = rt
 	return result, nil
@@ -604,6 +604,7 @@ probeDaemon:
 	args := []string{"serve"}
 	args = serveBackgroundArgsWithNoSync(args, cfg.NoSync)
 	args = serveBackgroundArgsWithSkipInitialSync(args, cfg.SkipInitialSync)
+	logOffset := backgroundServeLogSize(cfg.DataDir)
 	child, logPath, err := startServeBackgroundProcessForEnsure(ctx, *cfg, args)
 	if err != nil {
 		return nil, err
@@ -623,10 +624,7 @@ probeDaemon:
 				childPID: child.Process.Pid, LogPath: logPath,
 			})
 		}
-		return nil, fmt.Errorf(
-			"server exited before becoming ready: %w; logs: %s",
-			err, logPath,
-		)
+		return nil, backgroundServeExitError(err, logPath, logOffset)
 	}
 	if rt == nil {
 		return nil, fmt.Errorf(
@@ -881,6 +879,11 @@ func startServeBackgroundProcess(ctx context.Context,
 	if err := ctx.Err(); err != nil {
 		return nil, logPath, err
 	}
+	// Surface the actionable version error in the caller before re-exec hides
+	// it behind a child exit status. The child also checks before any writes.
+	if err := db.CheckDataVersion(ctx, cfg.DBPath); err != nil {
+		return nil, logPath, err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, logPath, fmt.Errorf("finding executable: %w", err)
@@ -924,6 +927,34 @@ func startServeBackgroundProcess(ctx context.Context,
 		return nil, logPath, fmt.Errorf("starting server: %w", err)
 	}
 	return cmd, logPath, nil
+}
+
+func backgroundServeLogSize(dataDir string) int64 {
+	if info, err := os.Stat(serveLogPath(dataDir)); err == nil {
+		return info.Size()
+	}
+	return 0
+}
+
+func backgroundServeExitError(cause error, logPath string, logOffset int64) error {
+	err := fmt.Errorf("server exited before becoming ready: %w\nLogs: %s", cause, logPath)
+	logFile, openErr := os.Open(logPath)
+	if openErr != nil {
+		return err
+	}
+	defer logFile.Close()
+	info, statErr := logFile.Stat()
+	if statErr != nil {
+		return err
+	}
+	// Read only this launch's output, bounded even after a verbose startup.
+	const maxOutput = 8 * 1024
+	start := max(logOffset, info.Size()-maxOutput)
+	output, readErr := io.ReadAll(io.NewSectionReader(logFile, start, maxOutput))
+	if readErr != nil || len(strings.TrimSpace(string(output))) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w\n\n%s", err, strings.TrimSpace(string(output)))
 }
 
 func serveBackgroundChildArgs(args []string) []string {

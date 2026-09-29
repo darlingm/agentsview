@@ -2694,6 +2694,57 @@ func writeTooNewSQLiteDB(t *testing.T, dir string) string {
 	return dbPath
 }
 
+func TestStartServeBackgroundProcessRejectsNewerArchiveBeforeLaunch(t *testing.T) {
+	dir := runtimeTestDir(t)
+	dbPath := writeTooNewSQLiteDB(t, dir)
+	child, _, err := startServeBackgroundProcess(t.Context(), config.Config{
+		DataDir: dir, DBPath: dbPath,
+	}, []string{"-test.run=^$"})
+	if child != nil {
+		t.Cleanup(func() { _ = child.Process.Kill(); _ = child.Wait() })
+	}
+	require.Error(t, err)
+	assert.True(t, db.IsDataVersionTooNew(err))
+	assert.Contains(t, err.Error(), "Use an AgentsView build")
+	assert.Nil(t, child)
+	assert.NoFileExists(t, serveLogPath(dir))
+}
+
+func TestBackgroundServeFailureIncludesCurrentLaunchOutput(t *testing.T) {
+	for _, autostart := range []bool{false, true} {
+		t.Run(fmt.Sprintf("autostart=%t", autostart), func(t *testing.T) {
+			dir := runtimeTestDir(t)
+			logPath := serveLogPath(dir)
+			require.NoError(t, os.WriteFile(logPath, []byte("old unrelated failure\n"), 0o600))
+			start := func(ctx context.Context, cfg config.Config, args []string) (*exec.Cmd, string, error) {
+				logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600)
+				require.NoError(t, err)
+				defer logFile.Close()
+				child := exec.CommandContext(t.Context(), "sh", "-c", "echo 'opening database: permission denied' >&2; exit 1")
+				child.Stderr = logFile
+				err = child.Start()
+				return child, logPath, err
+			}
+			oldEnsure, oldRun := startServeBackgroundProcessForEnsure, startServeBackgroundProcessForRun
+			startServeBackgroundProcessForEnsure, startServeBackgroundProcessForRun = start, start
+			t.Cleanup(func() {
+				startServeBackgroundProcessForEnsure, startServeBackgroundProcessForRun = oldEnsure, oldRun
+			})
+			cfg := config.Config{DataDir: dir}
+			var err error
+			if autostart {
+				_, err = ensureBackgroundServe(t.Context(), &cfg, time.Second)
+			} else {
+				_, err = startServeBackground(t.Context(), cfg, []string{"serve"}, serveReplacementOptions{}, backgroundLaunchPolicy{})
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "opening database: permission denied")
+			assert.NotContains(t, err.Error(), "old unrelated failure")
+			assert.Contains(t, err.Error(), logPath)
+		})
+	}
+}
+
 // requireConfiguredServeBackgroundSysProcAttr builds the background serve
 // command, applies configureServeBackgroundCommand, and returns the resulting
 // non-nil SysProcAttr for platform-specific assertions.

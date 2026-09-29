@@ -558,7 +558,7 @@ type DataVersionTooNewError struct {
 
 func (e *DataVersionTooNewError) Error() string {
 	return fmt.Sprintf(
-		"database data version %d is newer than this agentsview binary's data version %d, so this binary cannot safely open the archive. Use an AgentsView build with data version %d or newer, or restore an archive backup compatible with data version %d. The archive was not modified",
+		"database data version %d is newer than this agentsview binary's data version %d, so this binary cannot write to the archive or sync it. Use an AgentsView build with data version %d or newer, or restore an archive backup compatible with data version %d. The archive was not modified",
 		e.DatabaseVersion, e.BinaryVersion,
 		e.DatabaseVersion, e.BinaryVersion,
 	)
@@ -1707,6 +1707,7 @@ func initializeSchemaUpgradeMetadata(ctx context.Context, tx *sql.Tx) error {
 // OpenReadOnly opens an existing SQLite database without running migrations or
 // any writable initialization. It is intended for cold CLI reads and recovery
 // cases where another process may own writable access to the archive.
+// Newer parser data versions are readable when the required schema is present.
 func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 	if err := checkSimpleFTSRuntimeConfig(); err != nil {
 		return nil, err
@@ -1738,19 +1739,20 @@ func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 		return nil, fmt.Errorf("opening read-only reader: %w", err)
 	}
 
-	schemaStale, dataStale, err := probeDatabaseConn(ctx, reader)
+	version, err := readUserVersion(ctx, reader)
 	if err != nil {
 		reader.Close()
 		return nil, fmt.Errorf(
 			"checking read-only database: %w", err,
 		)
 	}
-	if schemaStale {
-		reader.Close()
-		return nil, errors.New("opening read-only database: schema is stale or incomplete")
-	}
 	if err := checkReadOnlySchemaCompatibility(ctx, reader); err != nil {
 		reader.Close()
+		if version > dataVersion {
+			return nil, errors.Join(err, &DataVersionTooNewError{
+				DatabaseVersion: version, BinaryVersion: dataVersion,
+			})
+		}
 		return nil, err
 	}
 
@@ -1758,7 +1760,7 @@ func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 		path: path, readOnly: true,
 		usageCache: newUsageCacheManager(path),
 	}
-	db.dataStale.Store(dataStale)
+	db.dataStale.Store(version < dataVersion)
 	db.usageCache.attachArchive(db)
 	db.reader.Store(reader)
 	db.cursorSecret = make([]byte, 32)

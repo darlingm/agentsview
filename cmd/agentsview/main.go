@@ -1453,7 +1453,7 @@ func openReadOnlyDB(ctx context.Context, cfg config.Config) (*db.DB, error) {
 // forward; it is the failure reported in issue #929 after a version bump while
 // an older daemon still owned the archive.
 func schemaUpgradeHint(err error) error {
-	if !db.IsSchemaUpgradeRequired(err) {
+	if !db.IsSchemaUpgradeRequired(err) || db.IsDataVersionTooNew(err) {
 		return err
 	}
 	return appendDaemonRestartUpgradeHint(err)

@@ -2545,6 +2545,17 @@ func TestOpenReadOnlyDBRejectsStaleArchive(t *testing.T) {
 }
 
 func TestSchemaUpgradeHint(t *testing.T) {
+	t.Run("newer incompatible schemas require a newer binary", func(t *testing.T) {
+		base := errors.Join(
+			&db.SchemaUpgradeRequiredError{Table: "sessions", Column: "deletion_cause"},
+			&db.DataVersionTooNewError{DatabaseVersion: db.CurrentDataVersion() + 1, BinaryVersion: db.CurrentDataVersion()},
+		)
+		got := schemaUpgradeHint(base)
+		require.ErrorIs(t, got, base)
+		assert.Contains(t, got.Error(), "Use an AgentsView build")
+		assert.NotContains(t, got.Error(), "agentsview daemon restart")
+	})
+
 	t.Run("guides outdated-schema errors to a daemon restart", func(t *testing.T) {
 		base := &db.SchemaUpgradeRequiredError{
 			Table:  "tool_calls",
