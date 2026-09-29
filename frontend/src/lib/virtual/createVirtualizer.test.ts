@@ -31,6 +31,7 @@ vi.mock("@tanstack/virtual-core", async () => {
         lastOptions.value = opts;
       }
       _willUpdate() {}
+      scrollToOffset = vi.fn();
     },
     observeElementOffset: vi.fn(),
     observeElementRect: vi.fn(),
