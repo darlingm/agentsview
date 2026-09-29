@@ -19,6 +19,7 @@ import {
 type Theme = "light" | "dark";
 export type MessageLayout = "default" | "compact" | "stream" | "skim";
 export type TranscriptMode = "normal" | "focused";
+export type TranscriptStyle = "accented" | "outlined";
 export type PublishTarget =
   | { kind: "session"; id: string }
   | { kind: "insight"; id: number }
@@ -86,6 +87,7 @@ export const ALL_BLOCK_TYPES: BlockType[] = [
 
 const BLOCK_FILTER_KEY = "agentsview-block-filters";
 const TRANSCRIPT_MODE_KEY = "agentsview-transcript-mode";
+const TRANSCRIPT_STYLE_KEY = "agentsview-transcript-style";
 const UNKNOWN_XML_PREFORMATTED_KEY = "agentsview-unknown-xml-preformatted";
 const VITALS_KEY = "agentsview-session-vitals";
 const VITALS_CALLS_EXPANDED_KEY = "agentsview-session-vitals-calls-expanded";
@@ -236,6 +238,15 @@ function readStoredLayout(): MessageLayout {
   return "default";
 }
 
+function readStoredTranscriptStyle(): TranscriptStyle {
+  try {
+    if (localStorage?.getItem(TRANSCRIPT_STYLE_KEY) === "outlined") return "outlined";
+  } catch {
+    // ignore
+  }
+  return "accented";
+}
+
 function readStoredTranscriptMode(): TranscriptMode {
   try {
     const raw = localStorage?.getItem(TRANSCRIPT_MODE_KEY);
@@ -296,6 +307,7 @@ class UIStore {
   sortNewestFirst: boolean = $state(false);
   messageLayout: MessageLayout = $state(readStoredLayout());
   transcriptMode: TranscriptMode = $state(readStoredTranscriptMode());
+  transcriptStyle: TranscriptStyle = $state(readStoredTranscriptStyle());
   sidebarWidth: number = $state(readStoredSidebarWidth());
   vitalsWidth: number = $state(readStoredVitalsWidth());
   activeModal: ModalType = $state(null);
@@ -333,6 +345,14 @@ class UIStore {
       $effect(() => {
         try {
           localStorage?.setItem(LAYOUT_KEY, this.messageLayout);
+        } catch {
+          // ignore
+        }
+      });
+
+      $effect(() => {
+        try {
+          localStorage?.setItem(TRANSCRIPT_STYLE_KEY, this.transcriptStyle);
         } catch {
           // ignore
         }
@@ -541,6 +561,10 @@ class UIStore {
   cycleLayout() {
     const idx = VALID_LAYOUTS.indexOf(this.messageLayout);
     this.messageLayout = VALID_LAYOUTS[(idx + 1) % VALID_LAYOUTS.length]!;
+  }
+
+  setTranscriptStyle(style: TranscriptStyle) {
+    this.transcriptStyle = style;
   }
 
   setLayout(layout: MessageLayout) {

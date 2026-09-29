@@ -8,6 +8,7 @@
     ZOOM_STEPS,
     type BlockType,
     type MessageLayout,
+    type TranscriptStyle,
   } from "../../stores/ui.svelte.js";
   import {
     isChartPalette,
@@ -31,6 +32,11 @@
     { value: "compact", label: m.appearance_layout_compact() },
     { value: "stream", label: m.appearance_layout_stream() },
     { value: "skim", label: m.appearance_layout_skim() },
+  ]);
+
+  const TRANSCRIPT_STYLE_OPTIONS: { value: TranscriptStyle; label: string }[] = $derived([
+    { value: "accented", label: m.appearance_transcript_style_accented() },
+    { value: "outlined", label: m.appearance_transcript_style_outlined() },
   ]);
 
   const BLOCK_LABELS: Record<BlockType, string> = $derived({
@@ -86,6 +92,16 @@
       value={ui.messageLayout}
       ariaLabel={m.appearance_message_layout()}
       onchange={(value) => ui.setLayout(value as MessageLayout)}
+    />
+  </div>
+
+  <div class="setting-row option-row">
+    <span class="setting-label">{m.appearance_transcript_style()}</span>
+    <SegmentedControl
+      options={TRANSCRIPT_STYLE_OPTIONS}
+      value={ui.transcriptStyle}
+      ariaLabel={m.appearance_transcript_style()}
+      onchange={(value) => ui.setTranscriptStyle(value as TranscriptStyle)}
     />
   </div>
 
