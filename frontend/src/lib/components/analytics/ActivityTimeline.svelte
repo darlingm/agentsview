@@ -667,7 +667,10 @@
 
   .controls {
     display: flex;
+    flex: 1;
+    flex-wrap: wrap;
     gap: 8px;
+    min-width: 0;
   }
 
   .metric-toggle,
