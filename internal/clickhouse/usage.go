@@ -1,6 +1,7 @@
 package clickhouse
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -828,6 +829,11 @@ func chPreparedUsageSourceSQL(state preparedUsageState, where string, whereArgs 
 		query += "\n\t\tUNION ALL\n\t\tSELECT " + chPreparedUsageRowColumns + " FROM usage_delta_rows WHERE " + where
 		args = append(args, whereArgs...)
 	}
+	if len(state.raw) > 0 {
+		query += "\n\t\tUNION ALL\n\t\tSELECT " + chPreparedUsageRowColumns + " FROM (" + chRawHostUsageRowsSQL() + ") WHERE " + where
+		args = append(args, state.pricingDigest)
+		args = append(args, whereArgs...)
+	}
 	return query, args
 }
 
@@ -853,9 +859,9 @@ func chExternalColumn[T ~string](declare func(string, T) func(*ext.Table) error,
 	return declare(name, T(typ))
 }
 
-// withUsageDeltaTables attaches the replaced session list and the prepared
-// delta rows a prepared read's SQL names, when the state has them, to the
-// context the read runs under.
+// withUsageDeltaTables attaches the replaced session list, the raw hosts'
+// session list, and the prepared delta rows a prepared read's SQL names,
+// when the state has them, to the context the read runs under.
 func withUsageDeltaTables(ctx context.Context, state preparedUsageState) (context.Context, error) {
 	if !state.ready {
 		return ctx, nil
@@ -863,6 +869,13 @@ func withUsageDeltaTables(ctx context.Context, state preparedUsageState) (contex
 	var tables []*ext.Table
 	if replaced := state.replaced(); len(replaced) > 0 {
 		table, err := usageSessionListTable("usage_replaced_sessions", replaced)
+		if err != nil {
+			return nil, err
+		}
+		tables = append(tables, table)
+	}
+	if len(state.raw) > 0 {
+		table, err := usageSessionListTable("usage_raw_host_sessions", state.raw)
 		if err != nil {
 			return nil, err
 		}
@@ -1653,7 +1666,7 @@ func (s *Store) forEachDailyUsageGroupRow(
 	if err != nil {
 		return err
 	}
-	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, "daily", f, "", pricingDigest, customModels)
+	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, state, "daily", f, "", pricingDigest, customModels)
 	if err != nil {
 		return err
 	}
@@ -1739,6 +1752,7 @@ func (s *Store) forEachDailyUsageGroupRow(
 	if err != nil {
 		return err
 	}
+	s.usageReadQueries.Add(1)
 	rows, err := s.queryContext(readCtx, query, args...)
 	if err != nil {
 		return fmt.Errorf("querying clickhouse daily usage aggregates: %w", err)
@@ -1852,6 +1866,12 @@ const chDailyUsageLoadAttempts = 3
 var errUsagePriceContextChanged = errors.New("usage price context changed during read")
 
 func (s *Store) GetDailyUsage(
+	ctx context.Context, f db.UsageFilter,
+) (db.DailyUsageResult, error) {
+	return s.dailyUsage(ctx, f)
+}
+
+func (s *Store) dailyUsage(
 	ctx context.Context, f db.UsageFilter,
 ) (db.DailyUsageResult, error) {
 	snapshot, err := s.pricingSnapshot(ctx)
@@ -2225,11 +2245,14 @@ func (s *Store) forEachSessionUsageAggregateRow(
 	if err != nil {
 		return err
 	}
-	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, "session", f, sessionID, "", nil)
+	// Only one session's rows are kept. Callers across every session keep
+	// their own totals instead of the rows.
+	keep := sessionID != ""
+	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, state, "session", f, sessionID, "", nil)
 	if err != nil {
 		return err
 	}
-	if rows, ok := s.sessionAggregateRows.get(memoSlot, memoVersion); ok {
+	if rows, ok := s.sessionAggregateRows.get(memoSlot, memoVersion); keep && ok {
 		for _, r := range rows {
 			if err := visit(r); err != nil {
 				return err
@@ -2255,6 +2278,7 @@ func (s *Store) forEachSessionUsageAggregateRow(
 	if err != nil {
 		return err
 	}
+	s.usageReadQueries.Add(1)
 	rows, err := s.queryContext(readCtx, query, args...)
 	if err != nil {
 		return fmt.Errorf("querying clickhouse session usage aggregates: %w", err)
@@ -2281,7 +2305,9 @@ func (s *Store) forEachSessionUsageAggregateRow(
 		r.ts = formatDBTime(ts)
 		r.pricingTS = formatDBTime(pricingTS)
 		r.startedAt = formatDBTime(startedAt)
-		memo = append(memo, r)
+		if keep {
+			memo = append(memo, r)
+		}
 		if err := visit(r); err != nil {
 			return err
 		}
@@ -2289,7 +2315,9 @@ func (s *Store) forEachSessionUsageAggregateRow(
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("iterating clickhouse session usage aggregates: %w", err)
 	}
-	s.sessionAggregateRows.put(memoSlot, memoVersion, memo)
+	if keep {
+		s.sessionAggregateRows.put(memoSlot, memoVersion, memo)
+	}
 	return nil
 }
 
@@ -2357,10 +2385,32 @@ func (s *Store) sessionUsageRows(
 func (s *Store) GetTopSessionsByCost(
 	ctx context.Context, f db.UsageFilter, limit int,
 ) ([]db.TopSessionEntry, error) {
-	rateResolver, err := s.loadPricingResolver(ctx)
+	return s.topSessionsByCost(ctx, f, limit)
+}
+
+func (s *Store) topSessionsByCost(
+	ctx context.Context, f db.UsageFilter, limit int,
+) ([]db.TopSessionEntry, error) {
+	state, err := s.preparedUsageState(ctx)
 	if err != nil {
 		return nil, err
 	}
+	pricing, err := s.pricingSnapshot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	// Keep one total per session rather than every usage row: the totals
+	// are all a later read needs, and they are a small fraction of the rows.
+	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, state, "top", f, "", pricing.digest, nil)
+	if err != nil {
+		return nil, err
+	}
+	if kept, ok := s.topSessionTotals.get(memoSlot, memoVersion); ok {
+		return db.SortAndLimitTopSessions(
+			slices.Clone(kept), limit, f.TopSessionsSort, f.TopSessionsTokenTypes,
+		), nil
+	}
+	rateResolver := export.NewPricingResolverWithDigest(pricing.rows, pricing.digest)
 	type acc struct {
 		row               db.TopSessionEntry
 		tokens            int
@@ -2420,19 +2470,26 @@ func (s *Store) GetTopSessionsByCost(
 		}
 		out = append(out, a.row)
 	}
+	s.topSessionTotals.put(memoSlot, memoVersion, out)
 	return db.SortAndLimitTopSessions(
-		out, limit, f.TopSessionsSort, f.TopSessionsTokenTypes,
+		slices.Clone(out), limit, f.TopSessionsSort, f.TopSessionsTokenTypes,
 	), nil
 }
 
 func (s *Store) GetUsageSessionCounts(
 	ctx context.Context, f db.UsageFilter,
 ) (db.UsageSessionCounts, error) {
+	return s.usageSessionCounts(ctx, f)
+}
+
+func (s *Store) usageSessionCounts(
+	ctx context.Context, f db.UsageFilter,
+) (db.UsageSessionCounts, error) {
 	state, err := s.preparedUsageState(ctx)
 	if err != nil {
 		return db.UsageSessionCounts{}, err
 	}
-	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, "counts", f, "", "", nil)
+	memoSlot, memoVersion, err := s.usageRowMemoKey(ctx, state, "counts", f, "", "", nil)
 	if err != nil {
 		return db.UsageSessionCounts{}, err
 	}
@@ -2443,6 +2500,7 @@ func (s *Store) GetUsageSessionCounts(
 		if err != nil {
 			return db.UsageSessionCounts{}, err
 		}
+		s.usageReadQueries.Add(1)
 		rows, err := s.queryContext(readCtx, source.cte+`
 			SELECT DISTINCT session_id, project, agent
 			FROM usage_localized
@@ -2479,18 +2537,57 @@ type chUsageSessionRow struct {
 }
 
 // usageRowMemoKey names a usage read's memo slot by the read's own
-// parameters and its version by the active parts of every table in the
-// mirror, so any push, merge, or refresh starts a new version.
+// parameters and its version by everything its rows depend on (see
+// usageReadFingerprint). A single session's usage is read from the raw
+// rows even when prepared rows are ready (see usageCTEFor), so its version
+// names the parts of every table: a push that fails after writing the raw
+// rows and before the snapshot changes no table a prepared read joins.
 func (s *Store) usageRowMemoKey(
-	ctx context.Context, kind string, f db.UsageFilter, sessionID, pricingDigest string,
-	customModels [][2]string,
+	ctx context.Context, state preparedUsageState, kind string, f db.UsageFilter,
+	sessionID, pricingDigest string, customModels [][2]string,
 ) (slot, version string, err error) {
-	version, err = s.partsFingerprint(ctx)
+	if sessionID != "" {
+		version, err = s.partsFingerprint(ctx)
+	} else {
+		version, err = s.usageReadFingerprint(ctx, state)
+	}
 	if err != nil {
 		return "", "", err
 	}
 	slot, err = usageRowMemoKeyFor(kind, f, sessionID, pricingDigest, customModels)
 	return slot, version, err
+}
+
+// chUsageReadTables are the tables a prepared usage read touches besides
+// prepared_usage itself, whose rows the state's stamp identifies.
+var chUsageReadTables = []string{
+	"sessions", "usage_session_snapshots", "cursor_usage_events", "usage_event_prices",
+	"usage_price_contexts", "model_pricing", "model_pricing_bands", "genai_pricing", "sync_metadata",
+}
+
+// chRawHostUsageTables are the tables a prepared read also reads while some
+// host is read raw; see preparedUsageState.raw.
+var chRawHostUsageTables = []string{"usage_messages", "usage_events"}
+
+// usageReadFingerprint identifies what a usage read depends on. A prepared
+// read depends on the prepared rows, named by the state's stamp, and on the
+// active parts of the tables it joins or prices from; the large message and
+// event tables, whose background merges rename parts long after a push, are
+// not among them. A raw read depends on the parts of every table.
+func (s *Store) usageReadFingerprint(ctx context.Context, state preparedUsageState) (string, error) {
+	if !state.ready {
+		return s.partsFingerprint(ctx)
+	}
+	tables := chUsageReadTables
+	if len(state.raw) > 0 {
+		// The raw hosts' rows come from the message and event tables.
+		tables = slices.Concat(tables, chRawHostUsageTables)
+	}
+	fingerprint, err := s.tablePartsFingerprint(ctx, tables)
+	if err != nil {
+		return "", err
+	}
+	return fingerprint + "|" + state.stamp, nil
 }
 
 // usageRowMemoKeyFor renders the key. The filter is JSON and the custom
@@ -2510,29 +2607,6 @@ func usageRowMemoKeyFor(
 		return "", fmt.Errorf("encoding usage filter for memo: %w", err)
 	}
 	return fmt.Sprintf("%s|%s|%s|%s|%#v", kind, filter, sessionID, pricingDigest, customModels), nil
-}
-
-// chUsageReadTables are the tables a prepared usage read touches besides
-// prepared_usage itself, whose rows the state's stamp identifies.
-var chUsageReadTables = []string{
-	"sessions", "usage_session_snapshots", "cursor_usage_events", "usage_event_prices",
-	"usage_price_contexts", "model_pricing", "model_pricing_bands", "genai_pricing", "sync_metadata",
-}
-
-// usageReadFingerprint identifies what a usage read depends on. A prepared
-// read depends on the prepared rows, named by the state's stamp, and on the
-// active parts of the tables it joins or prices from; the large message and
-// event tables, whose background merges rename parts long after a push, are
-// not among them. A raw read depends on the parts of every table.
-func (s *Store) usageReadFingerprint(ctx context.Context, state preparedUsageState) (string, error) {
-	if !state.ready {
-		return s.partsFingerprint(ctx)
-	}
-	fingerprint, err := s.tablePartsFingerprint(ctx, chUsageReadTables)
-	if err != nil {
-		return "", err
-	}
-	return fingerprint + "|" + state.stamp, nil
 }
 
 // partsFingerprint identifies the active parts of every table in the
@@ -2610,6 +2684,8 @@ type usageRowMemo[T any] struct {
 	mu      sync.Mutex
 	entries map[string]usageRowMemoEntry[T]
 	order   []string
+	// limit caps the slots; zero means usageRowMemoLimit.
+	limit int
 }
 
 type usageRowMemoEntry[T any] struct {
@@ -2643,7 +2719,7 @@ func (m *usageRowMemo[T]) put(slot, version string, rows []T) {
 	}
 	if _, ok := m.entries[slot]; !ok {
 		m.order = append(m.order, slot)
-		if len(m.order) > usageRowMemoLimit {
+		if len(m.order) > cmp.Or(m.limit, usageRowMemoLimit) {
 			delete(m.entries, m.order[0])
 			m.order = m.order[1:]
 		}
