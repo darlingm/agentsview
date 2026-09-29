@@ -226,6 +226,12 @@ describe("SettingsPage", () => {
     );
     expect(search).not.toBeNull();
 
+    search!.value = "outlined";
+    search!.dispatchEvent(new Event("input", { bubbles: true }));
+    await tick();
+    expect(nav.querySelectorAll("button")).toHaveLength(1);
+    expect(nav.textContent).toContain("Appearance");
+
     search!.value = "vectors";
     search!.dispatchEvent(new Event("input", { bubbles: true }));
     await tick();

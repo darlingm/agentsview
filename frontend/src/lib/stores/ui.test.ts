@@ -798,6 +798,117 @@ describe("UIStore", () => {
     });
   });
 
+  describe("transcriptStyle", () => {
+    afterEach(() => {
+      ui.setTranscriptStyle("accented");
+    });
+
+    it("defaults to accented without changing other appearance preferences", () => {
+      expect(ui.transcriptStyle).toBe("accented");
+      const before = {
+        layout: ui.messageLayout,
+        theme: ui.theme,
+        contrast: ui.highContrast,
+        mode: ui.transcriptMode,
+      };
+      ui.setTranscriptStyle("outlined");
+      expect(ui.transcriptStyle).toBe("outlined");
+      expect({
+        layout: ui.messageLayout,
+        theme: ui.theme,
+        contrast: ui.highContrast,
+        mode: ui.transcriptMode,
+      }).toEqual(before);
+    });
+
+    it("restores outlined cards and persists switching back to accented", async () => {
+      const original = globalThis.localStorage;
+      const setItem = vi.fn();
+      Object.defineProperty(globalThis, "localStorage", {
+        value: {
+          getItem: vi.fn((key: string) =>
+            key === "agentsview-transcript-style" ? "outlined" : null,
+          ),
+          setItem,
+        },
+        writable: true,
+        configurable: true,
+      });
+      try {
+        // @ts-expect-error -- cache bust for fresh UIStore
+        const mod = await import("./ui.svelte.js?persistTranscriptStyle");
+        expect(mod.ui.transcriptStyle).toBe("outlined");
+        mod.ui.setTranscriptStyle("accented");
+        await tick();
+        expect(setItem).toHaveBeenCalledWith("agentsview-transcript-style", "accented");
+        mod.ui.setTranscriptStyle("outlined");
+        await tick();
+        expect(setItem).toHaveBeenCalledWith("agentsview-transcript-style", "outlined");
+      } finally {
+        Object.defineProperty(globalThis, "localStorage", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
+
+    it("falls back to accented for an unknown stored style", async () => {
+      const original = globalThis.localStorage;
+      Object.defineProperty(globalThis, "localStorage", {
+        value: {
+          getItem: vi.fn((key: string) =>
+            key === "agentsview-transcript-style" ? "unknown" : null,
+          ),
+          setItem: vi.fn(),
+        },
+        writable: true,
+        configurable: true,
+      });
+      try {
+        // @ts-expect-error -- cache bust for fresh UIStore
+        const mod = await import("./ui.svelte.js?invalidTranscriptStyle");
+        expect(mod.ui.transcriptStyle).toBe("accented");
+      } finally {
+        Object.defineProperty(globalThis, "localStorage", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
+
+    it("remains usable when browser storage is blocked", async () => {
+      const original = globalThis.localStorage;
+      Object.defineProperty(globalThis, "localStorage", {
+        value: {
+          getItem: () => {
+            throw new Error("storage blocked");
+          },
+          setItem: () => {
+            throw new Error("storage blocked");
+          },
+        },
+        writable: true,
+        configurable: true,
+      });
+      try {
+        // @ts-expect-error -- cache bust for fresh UIStore
+        const mod = await import("./ui.svelte.js?blockedTranscriptStyle");
+        expect(mod.ui.transcriptStyle).toBe("accented");
+        mod.ui.setTranscriptStyle("outlined");
+        await tick();
+        expect(mod.ui.transcriptStyle).toBe("outlined");
+      } finally {
+        Object.defineProperty(globalThis, "localStorage", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
+  });
+
   describe("transcriptMode", () => {
     beforeEach(() => {
       ui.setTranscriptMode("normal");

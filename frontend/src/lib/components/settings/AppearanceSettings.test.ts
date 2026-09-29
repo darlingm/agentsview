@@ -25,6 +25,7 @@ const originalIsDesktop = sync.isDesktop;
 describe("AppearanceSettings", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    ui.setTranscriptStyle("accented");
     settingsService.putApiV1Settings.mockResolvedValue({
       agent_dirs: {},
       chart_palette: "agentsview",
@@ -47,6 +48,7 @@ describe("AppearanceSettings", () => {
   });
 
   afterEach(() => {
+    ui.setTranscriptStyle("accented");
     ui.setZoomLevel(100);
     ui.renderUnknownXmlBlocksAsPreformatted = false;
     if (ui.highContrast) ui.toggleHighContrast();
@@ -166,6 +168,24 @@ describe("AppearanceSettings", () => {
     await fireEvent.click(checkbox);
     expect(ui.renderUnknownXmlBlocksAsPreformatted).toBe(true);
     expect((checkbox as HTMLInputElement).checked).toBe(true);
+  });
+
+  it.each([false, true])("keeps transcript style local with readOnly=%s", async (readOnly) => {
+    settings.readOnly = readOnly;
+    const { getByRole } = render(AppearanceSettings);
+    expect(getByRole("radiogroup", { name: "Transcript style" })).toBeTruthy();
+    expect(getByRole("radio", { name: "Accented" }).getAttribute("aria-checked")).toBe("true");
+    const outlined = getByRole("radio", { name: "Outlined cards" });
+    expect((outlined as HTMLButtonElement).disabled).toBe(false);
+    await fireEvent.click(outlined);
+    await waitFor(() =>
+      expect(localStorage.getItem("agentsview-transcript-style")).toBe("outlined"),
+    );
+    expect(ui.transcriptStyle).toBe("outlined");
+    expect(outlined.getAttribute("aria-checked")).toBe("true");
+    await fireEvent.click(getByRole("radio", { name: "Accented" }));
+    expect(ui.transcriptStyle).toBe("accented");
+    expect(settingsService.putApiV1Settings).not.toHaveBeenCalled();
   });
 
   it("toggles high contrast", async () => {

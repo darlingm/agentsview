@@ -11,6 +11,7 @@
   import { CircleQuestionMarkIcon, MessageSquareIcon } from "../../icons.js";
   import { createVirtualizer } from "../../virtual/createVirtualizer.svelte.js";
   import MessageContent from "./MessageContent.svelte";
+  import TranscriptAppearance from "./TranscriptAppearance.svelte";
   import CompactBoundaryDivider from "./CompactBoundaryDivider.svelte";
   import SystemBoundaryCard from "../system/SystemBoundaryCard.svelte";
   import ToolCallGroup from "./ToolCallGroup.svelte";
@@ -811,77 +812,79 @@
     </Button>
   </EmptyState>
 {:else}
-  <SessionFindView
-    items={displayItemsAsc}
-    totalSize={virtualizer.instance?.getTotalSize() ?? 0}
-    newestFirst={ui.sortNewestFirst}
-    rowOffset={(index) => virtualizer.instance?.getOffsetForIndex(index, "start")?.[0] ?? index * 120}
-  >
-  <div
-    class="message-list-scroll layout-{effectiveLayout}"
-    bind:this={containerRef}
-    data-session-id={sessions.activeSessionId}
-    data-messages-session-id={messages.sessionId}
-    data-loaded={!messages.loading}
-    onscroll={handleScroll}
-    use:manualScrollIntent
-  >
-    <div
-      style="height: {virtualizer.instance?.getTotalSize() ?? 0}px; width: 100%; position: relative;"
+  <TranscriptAppearance>
+    <SessionFindView
+      items={displayItemsAsc}
+      totalSize={virtualizer.instance?.getTotalSize() ?? 0}
+      newestFirst={ui.sortNewestFirst}
+      rowOffset={(index) => virtualizer.instance?.getOffsetForIndex(index, "start")?.[0] ?? index * 120}
     >
-      {#each virtualizer.instance?.getVirtualItems() ?? [] as row (row.key)}
-        {@const item = itemAt(row.index)}
-        {#if item}
-          <!-- svelte-ignore a11y_click_events_have_key_events -->
-          <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div
-            class="virtual-row"
-            class:selected={ui.selectedOrdinal !== null &&
-              item.ordinals.includes(ui.selectedOrdinal)}
-            data-index={row.index}
-            style="position: absolute; top: 0; left: 0; width: 100%; transform: translateY({row.start}px);"
-            use:measureElement={virtualizer.instance}
-            onclick={() => {
-              const sel = window.getSelection();
-              if (sel && sel.toString().length > 0) return;
-              ui.selectOrdinal(item.ordinals[0]!);
-            }}
-          >
-            {#if item.kind !== "tool-group" && readProgressDivider !== null && item.ordinals.includes(readProgressDivider.ordinal)}
-              <div class="read-progress-divider" role="separator" aria-label={m.read_progress_boundary()}>
-                {readProgressDivider.label}
-              </div>
-            {/if}
-            {#if item.kind === "tool-group"}
-              <ToolCallGroup
-                messages={item.messages}
-                timestamp={item.timestamp}
-                searchable={true}
-                sortNewestFirst={ui.sortNewestFirst}
-                divider={readProgressDivider !== null && item.ordinals.includes(readProgressDivider.ordinal)
-                  ? readProgressDivider
-                  : undefined}
-              />
-            {:else if item.message.is_compact_boundary}
-              <CompactBoundaryDivider message={item.message} />
-            {:else if isSystemBoundaryMessage(item.message)}
-              <SystemBoundaryCard
-                subtype={item.message.source_subtype}
-                content={item.message.content}
-                timestamp={item.message.timestamp}
-              />
-            {:else}
-              <MessageContent
-                message={item.message}
-                searchOrdinal={item.message.ordinal}
-              />
-            {/if}
-          </div>
-        {/if}
-      {/each}
+    <div
+      class="message-list-scroll layout-{effectiveLayout}"
+      bind:this={containerRef}
+      data-session-id={sessions.activeSessionId}
+      data-messages-session-id={messages.sessionId}
+      data-loaded={!messages.loading}
+      onscroll={handleScroll}
+      use:manualScrollIntent
+    >
+      <div
+        style="height: {virtualizer.instance?.getTotalSize() ?? 0}px; width: 100%; position: relative;"
+      >
+        {#each virtualizer.instance?.getVirtualItems() ?? [] as row (row.key)}
+          {@const item = itemAt(row.index)}
+          {#if item}
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+              class="virtual-row"
+              class:selected={ui.selectedOrdinal !== null &&
+                item.ordinals.includes(ui.selectedOrdinal)}
+              data-index={row.index}
+              style="position: absolute; top: 0; left: 0; width: 100%; transform: translateY({row.start}px);"
+              use:measureElement={virtualizer.instance}
+              onclick={() => {
+                const sel = window.getSelection();
+                if (sel && sel.toString().length > 0) return;
+                ui.selectOrdinal(item.ordinals[0]!);
+              }}
+            >
+              {#if item.kind !== "tool-group" && readProgressDivider !== null && item.ordinals.includes(readProgressDivider.ordinal)}
+                <div class="read-progress-divider" role="separator" aria-label={m.read_progress_boundary()}>
+                  {readProgressDivider.label}
+                </div>
+              {/if}
+              {#if item.kind === "tool-group"}
+                <ToolCallGroup
+                  messages={item.messages}
+                  timestamp={item.timestamp}
+                  searchable={true}
+                  sortNewestFirst={ui.sortNewestFirst}
+                  divider={readProgressDivider !== null && item.ordinals.includes(readProgressDivider.ordinal)
+                    ? readProgressDivider
+                    : undefined}
+                />
+              {:else if item.message.is_compact_boundary}
+                <CompactBoundaryDivider message={item.message} />
+              {:else if isSystemBoundaryMessage(item.message)}
+                <SystemBoundaryCard
+                  subtype={item.message.source_subtype}
+                  content={item.message.content}
+                  timestamp={item.message.timestamp}
+                />
+              {:else}
+                <MessageContent
+                  message={item.message}
+                  searchOrdinal={item.message.ordinal}
+                />
+              {/if}
+            </div>
+          {/if}
+        {/each}
+      </div>
     </div>
-  </div>
-  </SessionFindView>
+    </SessionFindView>
+  </TranscriptAppearance>
 {/if}
 
 <style>
