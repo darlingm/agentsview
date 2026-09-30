@@ -948,6 +948,30 @@ func TestUpgradeExportSchemaInPlaceRejectsUnrelatedSchemaGap(t *testing.T) {
 	assert.Contains(t, err.Error(), "not eligible")
 }
 
+func TestExportSchemaUpgradeRejectsVersionChangedAfterPreflight(t *testing.T) {
+	d := testDB(t)
+	require.NoError(t, CheckDataVersion(t.Context(), d.Path()))
+
+	// Another writer upgrades the archive after the read-only preflight.
+	conn, err := sql.Open("sqlite3", d.Path())
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(),
+		fmt.Sprintf("PRAGMA user_version = %d", dataVersion+1))
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+
+	tx, err := d.getWriter().BeginTx(t.Context(), nil)
+	require.NoError(t, err)
+	defer tx.Rollback()
+	eligible, err := exportSchemaUpgradeEligible(t.Context(), tx,
+		&SchemaUpgradeRequiredError{
+			Table: "project_identity_observations", Column: "checkout_state",
+		})
+	require.Error(t, err)
+	assert.True(t, IsDataVersionTooNew(err))
+	assert.False(t, eligible)
+}
+
 func TestUpgradeExportSchemaInPlaceRejectsUnsupportedExistingTableGap(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "test.db")

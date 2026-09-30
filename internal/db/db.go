@@ -1577,6 +1577,17 @@ func exportSchemaUpgradeTarget(err error) (*SchemaUpgradeRequiredError, bool) {
 func exportSchemaUpgradeEligible(
 	ctx context.Context, tx *sql.Tx, target *SchemaUpgradeRequiredError,
 ) (bool, error) {
+	// Keep the version check and schema writes in one SQLite snapshot.
+	// An intervening writer then prevents this transaction from writing.
+	var version int
+	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		return false, fmt.Errorf("checking export upgrade data version: %w", err)
+	}
+	if version > dataVersion {
+		return false, &DataVersionTooNewError{
+			DatabaseVersion: version, BinaryVersion: dataVersion,
+		}
+	}
 	var tableExists bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS(
