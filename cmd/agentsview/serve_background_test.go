@@ -2711,6 +2711,11 @@ func TestStartServeBackgroundProcessRejectsNewerArchiveBeforeLaunch(t *testing.T
 }
 
 func TestBackgroundServeFailureIncludesCurrentLaunchOutput(t *testing.T) {
+	const childEnv = "AGENTSVIEW_BACKGROUND_FAILURE_OUTPUT_HELPER"
+	if os.Getenv(childEnv) == "1" {
+		fmt.Fprintln(os.Stderr, "opening database: permission denied")
+		os.Exit(1)
+	}
 	for _, autostart := range []bool{false, true} {
 		t.Run(fmt.Sprintf("autostart=%t", autostart), func(t *testing.T) {
 			dir := runtimeTestDir(t)
@@ -2720,7 +2725,9 @@ func TestBackgroundServeFailureIncludesCurrentLaunchOutput(t *testing.T) {
 				logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_APPEND, 0o600)
 				require.NoError(t, err)
 				defer logFile.Close()
-				child := exec.CommandContext(t.Context(), "sh", "-c", "echo 'opening database: permission denied' >&2; exit 1")
+				child := exec.CommandContext(t.Context(), os.Args[0],
+					"-test.run=^TestBackgroundServeFailureIncludesCurrentLaunchOutput$")
+				child.Env = append(os.Environ(), childEnv+"=1")
 				child.Stderr = logFile
 				err = child.Start()
 				return child, logPath, err

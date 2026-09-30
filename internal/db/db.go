@@ -1603,6 +1603,9 @@ func UpgradeExportSchemaInPlace(ctx context.Context, path string, cause error) (
 	if !ok {
 		return fmt.Errorf("schema gap is not eligible for export upgrade: %w", cause)
 	}
+	if err := CheckDataVersion(ctx, path); err != nil {
+		return err
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return fmt.Errorf("checking database for schema upgrade: %w", err)

@@ -78,6 +78,29 @@ func TestExportSessionsPublishesArchiveIdentity(t *testing.T) {
 	}
 }
 
+func TestExportSessionsRejectsNewerArchiveSchemaUpgrade(t *testing.T) {
+	database := seedExportSessionsArchive(t)
+	path := database.Path()
+	require.NoError(t, database.Close())
+	conn, err := sql.Open("sqlite3", path)
+	require.NoError(t, err)
+	_, err = conn.ExecContext(t.Context(),
+		"PRAGMA user_version = "+strconv.Itoa(db.CurrentDataVersion()+1)+
+			"; DROP TABLE session_project_identity_snapshots;")
+	require.NoError(t, err)
+	require.NoError(t, conn.Close())
+	before, err := os.ReadFile(path)
+	require.NoError(t, err)
+
+	stdout, _, err := executeExportSessionsCommand(newRootCommand(), "export", "sessions")
+	require.Error(t, err)
+	assert.True(t, db.IsDataVersionTooNew(err))
+	assert.Empty(t, stdout)
+	after, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.True(t, bytes.Equal(before, after), "export must not modify a newer archive")
+}
+
 func TestExportSessionsJSONEmitsOneDocument(t *testing.T) {
 	seedExportSessionsArchive(t)
 
