@@ -273,7 +273,8 @@ func cursorIDEParseMember(
 	)
 }
 
-// cursorIDEParseContainerEach yields each composer as it is parsed, so the provider holds one transcript at a time.
+// cursorIDEParseContainerEach yields each composer as it is parsed, so the
+// provider holds one transcript at a time.
 func cursorIDEParseContainerEach(
 	ctx context.Context, src multiSessionSource, req ParseRequest,
 	yield func(ParseResult) error,

@@ -12512,6 +12512,7 @@ func (e *Engine) processProviderFile(
 		}
 		return skipRes, true
 	}
+	// Only Session.ID and Session.File.Path are populated for ownership checks.
 	parsedResults := admission.emitted
 	parsedCount := len(parsedResults)
 	excludedSessionIDs := append([]string(nil), outcome.ExcludedSessionIDs...)

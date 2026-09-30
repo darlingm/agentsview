@@ -1160,7 +1160,7 @@ func TestReconcileCursorIDEContainerRetainsOnlyChangedMembers(t *testing.T) {
 			}}
 			sync.SetParseAdmissionObserver(engine, probe.observe)
 
-			_ = engine.ReconcileProviderRoots(t.Context(), parser.AgentCursorIDE, []string{root})
+			require.NoError(t, engine.ReconcileProviderRoots(t.Context(), parser.AgentCursorIDE, []string{root}))
 			sync.SetParseAdmissionObserver(engine, nil)
 
 			_, maxYielded, maxRetained := probe.snapshot()
