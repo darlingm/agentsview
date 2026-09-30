@@ -19558,6 +19558,7 @@ func (d DBSecretFindingRow) Validate() error {
 type DBSession struct {
 	Agent                  string            `json:"agent" validate:"required"`
 	AgentLabel             *string           `json:"agent_label,omitempty"`
+	ArchivedAt             *string           `json:"archived_at,omitempty"`
 	CompactionCount        int64             `json:"compaction_count"`
 	ConsecutiveFailureMax  int64             `json:"consecutive_failure_max"`
 	ContextPressureMax     *float64          `json:"context_pressure_max,omitempty"`

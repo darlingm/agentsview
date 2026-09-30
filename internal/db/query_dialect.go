@@ -651,12 +651,15 @@ func buildSessionFilterWithBuilder(
 		rootMatchParts = append(rootMatchParts, oneShotPred)
 	}
 	rootMatchParts = append(rootMatchParts,
-		BuildCanonicalRootWhere(b.dialect, "root_session", f.IncludeOrphans))
+		BuildSidebarRootWhere(f, b.dialect, "root_session"))
 	rootMatch := strings.Join(rootMatchParts, " AND ")
 	childAutomationPred := automationScopePredicate(f, b.dialect, "s")
 	childAutomationWhere := ""
+	if pred := ArchiveStatePredicate(f.ArchiveState, "s"); pred != "" {
+		childAutomationWhere = " AND " + pred
+	}
 	if childAutomationPred != "" {
-		childAutomationWhere = " AND " + childAutomationPred
+		childAutomationWhere += " AND " + childAutomationPred
 	}
 
 	cte := "WITH RECURSIVE tree(id) AS (" +
@@ -695,6 +698,13 @@ func sessionFilterPredicates(
 	f SessionFilter, b *QueryBuilder, q func(string) string,
 ) ([]string, string) {
 	var preds []string
+	if pred := ArchiveStatePredicate(f.ArchiveState, ""); pred != "" {
+		if f.ArchiveState == "archived" {
+			preds = append(preds, q("archived_at")+" IS NOT NULL")
+		} else {
+			preds = append(preds, q("archived_at")+" IS NULL")
+		}
+	}
 	if f.SessionID != "" {
 		preds = append(preds, q("id")+" = "+b.Add(f.SessionID))
 	}

@@ -604,6 +604,8 @@ func contractLocalOnlyMethods(
 		ignoredName := "ignored"
 		requireReadOnly(t, store.RenameSession(ctx, fixture.alphaID, &ignoredName))
 		requireReadOnly(t, store.SoftDeleteSession(ctx, fixture.alphaID))
+		_, archiveErr := store.SetSessionsArchived(ctx, []string{fixture.alphaID}, true)
+		requireReadOnly(t, archiveErr)
 		_, err := store.RestoreSession(ctx, fixture.deletedID)
 		requireReadOnly(t, err)
 		_, err = store.DeleteSessionIfTrashed(ctx, fixture.deletedID)

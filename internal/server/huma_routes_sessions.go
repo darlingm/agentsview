@@ -61,6 +61,9 @@ func (s *Server) registerSessionRoutes() {
 	s.deleteRoute(group, "/sessions/{id}", "Delete session", s.humaDeleteSession)
 	s.post(group, "/sessions/{id}/restore", "Restore session", s.humaRestoreSession)
 	s.deleteRoute(group, "/sessions/{id}/permanent", "Permanently delete session", s.humaPermanentDeleteSession)
+	s.put(group, "/sessions/{id}/archive", "Archive session", s.humaArchiveSession)
+	s.deleteRoute(group, "/sessions/{id}/archive", "Unarchive session", s.humaUnarchiveSession)
+	s.post(group, "/sessions/batch-archive", "Set session archive states", s.humaBatchArchiveSessions)
 	s.get(group, "/trash", "List trash", s.humaListTrash)
 	s.deleteRoute(group, "/trash", "Empty trash", s.humaEmptyTrash)
 }
@@ -236,7 +239,7 @@ func (s *Server) humaListSessions(
 
 func (s *Server) humaSidebarSessionIndex(
 	ctx context.Context,
-	in *sessionFilterInput,
+	in *sidebarSessionFilterInput,
 ) (*jsonOutput[db.SidebarSessionIndex], error) {
 	filter, err := in.dbFilter(true)
 	if err != nil {
@@ -246,6 +249,7 @@ func (s *Server) humaSidebarSessionIndex(
 	if err != nil {
 		return nil, serverError(err)
 	}
+	filter.ArchiveState = in.ArchiveState
 	index, err := s.db.GetSidebarSessionIndex(ctx, filter)
 	if err != nil {
 		if errors.Is(err, db.ErrInvalidCursor) {

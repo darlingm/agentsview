@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button, Checkbox, SegmentedControl, Typeahead } from "@kenn-io/kit-ui";
   import { m } from "../../i18n/index.js";
+  import { sessionArchive } from "../../stores/sessionArchive.svelte.js";
   import { settings } from "../../stores/settings.svelte.js";
   import {
     ui,
@@ -89,6 +90,24 @@
     />
   </div>
 
+  <div class="archive-visibility-setting">
+    <div class="setting-row option-row">
+      <span class="setting-label">{m.session_archive_visibility()}</span>
+      <SegmentedControl
+        options={[
+          { value: "hide", label: m.session_archive_hide() },
+          { value: "dim", label: m.session_archive_dim() },
+        ]}
+        value={sessionArchive.visibility}
+        ariaLabel={m.session_archive_visibility()}
+        onchange={(value) => {
+          if (value === "hide" || value === "dim") sessionArchive.setVisibility(value);
+        }}
+      />
+    </div>
+    <p class="setting-help">{m.session_archive_visibility_help()}</p>
+  </div>
+
   <div class="setting-row">
     <span class="setting-label">{m.appearance_zoom()}</span>
     <Typeahead
@@ -150,6 +169,16 @@
     font-weight: 500;
     color: var(--text-secondary);
     white-space: nowrap;
+  }
+
+  .archive-visibility-setting .setting-label {
+    white-space: normal;
+  }
+
+  .setting-help {
+    margin: var(--space-2) 0 0;
+    color: var(--text-secondary);
+    font-size: 12px;
   }
 
   .block-toggles {

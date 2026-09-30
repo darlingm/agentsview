@@ -843,7 +843,7 @@
   "settings_search_empty": "一致する設定がありません",
   "settings_search_clear": "検索をクリア",
   "settings_search_result": "{category}を表示中",
-  "settings_search_keywords_appearance": "テーマのコントラスト レイアウト テキスト フォント ブロック ズーム zoom",
+  "settings_search_keywords_appearance": "テーマのコントラスト レイアウト テキスト フォント ブロック ズーム zoom アーカイブ アーカイブ済み",
   "settings_search_keywords_language": "言語ロケールの翻訳",
   "settings_search_keywords_date_ranges": "リンクされたページの日付範囲",
   "settings_search_keywords_terminal": "ターミナル再開バイナリ引数クリップボードの起動",
@@ -2372,5 +2372,16 @@
   "go_to_session_ambiguous": "複数のセッションIDまたはUUIDが一致します。既存のリンクから目的のセッションを開いてください。",
   "go_to_session_capped": "一致するセッションIDまたはUUIDが多すぎます。既存のリンクから目的のセッションを開いてください。",
   "go_to_session_failed": "セッションを検索できませんでした。もう一度お試しください。",
-  "shortcuts_go_to_session": "検索を閉じてセッションへ移動"
+  "shortcuts_go_to_session": "検索を閉じてセッションへ移動",
+  "session_archive_visibility": "セッション一覧のアーカイブ済みセッション",
+  "session_archive_hide": "非表示",
+  "session_archive_dim": "薄く表示",
+  "session_archive_visibility_help": "通常の閲覧時の表示方法を選択します。検索と分析には影響しません。",
+  "session_archive_only": "アーカイブ済みのみ表示",
+  "session_archive_error": "アーカイブ状態を変更できませんでした。もう一度お試しください。",
+  "session_archive_archive": "アーカイブ",
+  "session_archive_unarchive": "アーカイブ解除",
+  "session_archive_archived_label": "アーカイブ済み",
+  "session_archive_archived_count": "アーカイブ済み: {countLabel}",
+  "session_archive_unarchived_count": "アーカイブ解除済み: {countLabel}"
 }

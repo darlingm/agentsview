@@ -1,6 +1,7 @@
 <script lang="ts">
   import { m } from "../../i18n/index.js";
   import {
+    showFlash,
     FitStages,
     KbdBadge,
     Spinner,
@@ -8,6 +9,7 @@
     type TopBarTab,
   } from "@kenn-io/kit-ui";
   import {
+    ArchiveIcon,
     AlignJustifyIcon,
     ArrowDownIcon,
     ArrowDownWideNarrowIcon,
@@ -463,6 +465,26 @@
           <ArrowUpNarrowWideIcon size="14" strokeWidth="2" aria-hidden="true" />
         {/if}
       </button>
+
+      {#if !sync.readOnly && sessions.activeSession}
+        <button
+          class="header-btn"
+          disabled={sessions.archiveBusy}
+          title={sessions.activeSession.archived_at ? m.session_archive_unarchive() : m.session_archive_archive()}
+          aria-label={sessions.activeSession.archived_at ? m.session_archive_unarchive() : m.session_archive_archive()}
+          onclick={async () => {
+            const session = sessions.activeSession;
+            if (!session) return;
+            try {
+              await sessions.setArchived([session.id], !session.archived_at);
+            } catch {
+              showFlash(m.session_archive_error(), { tone: "danger" });
+            }
+          }}
+        >
+          <ArchiveIcon size="14" aria-hidden="true" />
+        </button>
+      {/if}
 
       <!-- Layout, export, publish: collapse into overflow at narrow widths -->
       <button

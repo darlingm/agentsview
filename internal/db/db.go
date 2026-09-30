@@ -2220,6 +2220,10 @@ func schemaColumnMigrations() []schemaColumnMigration {
 			"ALTER TABLE sessions ADD COLUMN session_name TEXT",
 		},
 		{
+			"sessions", "archived_at",
+			"ALTER TABLE sessions ADD COLUMN archived_at TEXT",
+		},
+		{
 			"sessions", "deleted_at",
 			"ALTER TABLE sessions ADD COLUMN deleted_at TEXT",
 		},

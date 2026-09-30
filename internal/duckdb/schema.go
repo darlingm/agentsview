@@ -19,8 +19,9 @@ import (
 // reasoning effort to messages. v15 adds explicit session-project
 // assignment state. v16 rebuilds after SQLite data version 111 rewrote
 // stored Devin source identities; pre-111 mirrors would otherwise keep
-// serving bare ids that deduplicate across sessions.
-const SchemaVersion = 16
+// serving bare ids that deduplicate across sessions. v17 adds the user-owned
+// archived_at marker.
+const SchemaVersion = 17
 
 const schemaVersionMetadataKey = "agentsview_schema_version"
 
@@ -173,6 +174,7 @@ var mirrorTables = []tableSpec{
 			transcript_fidelity TEXT NOT NULL DEFAULT '',
 			parser_malformed_lines INTEGER NOT NULL DEFAULT 0,
 			is_truncated BOOLEAN NOT NULL DEFAULT FALSE,
+			archived_at TIMESTAMP,
 			deleted_at TIMESTAMP,
 			deletion_cause TEXT,
 			created_at TIMESTAMP,

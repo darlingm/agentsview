@@ -843,7 +843,7 @@
   "settings_search_empty": "Aucun paramètre correspondant",
   "settings_search_clear": "Effacer la recherche",
   "settings_search_result": "Affichage de {category}",
-  "settings_search_keywords_appearance": "thème contraste disposition texte police blocs theme contrast layout text font blocks zoom",
+  "settings_search_keywords_appearance": "thème contraste disposition texte police blocs theme contrast layout text font blocks zoom Archiver Archivée",
   "settings_search_keywords_language": "langue paramètres régionaux traduction language locale translation",
   "settings_search_keywords_date_ranges": "date plage pages liées date range linked pages",
   "settings_search_keywords_terminal": "terminal reprise lancement exécutable arguments presse-papiers terminal resume launch binary clipboard",
@@ -2383,5 +2383,16 @@
   "go_to_session_ambiguous": "Plusieurs sessions correspondent à cet ID ou UUID. Ouvrez la session souhaitée avec un lien existant.",
   "go_to_session_capped": "Trop de sessions correspondent à cet ID ou UUID. Ouvrez la session souhaitée avec un lien existant.",
   "go_to_session_failed": "Impossible de rechercher cette session. Réessayez.",
-  "shortcuts_go_to_session": "Accéder à une session lorsque la recherche est fermée"
+  "shortcuts_go_to_session": "Accéder à une session lorsque la recherche est fermée",
+  "session_archive_visibility": "Sessions archivées dans la liste des sessions",
+  "session_archive_hide": "Masquer",
+  "session_archive_dim": "Afficher en atténué",
+  "session_archive_visibility_help": "Choisissez leur apparence en navigation normale. La recherche et les statistiques restent inchangées.",
+  "session_archive_only": "Afficher uniquement les sessions archivées",
+  "session_archive_error": "Impossible de modifier l’état d’archivage. Réessayez.",
+  "session_archive_archive": "Archiver",
+  "session_archive_unarchive": "Désarchiver",
+  "session_archive_archived_label": "Archivée",
+  "session_archive_archived_count": "Archivées : {countLabel}",
+  "session_archive_unarchived_count": "Désarchivées : {countLabel}"
 }

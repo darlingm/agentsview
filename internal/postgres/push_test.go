@@ -745,18 +745,19 @@ func TestPushSessionCarriesDeletionCauseInStableParameterOrder(t *testing.T) {
 	require.NoError(t, err)
 	deletedAt := "2026-07-14T12:34:56Z"
 	cause := "source_missing"
+	archivedAt := "2026-07-13T12:34:56Z"
 
 	err = (&Sync{machine: "push-machine"}).pushSession(
 		t.Context(), tx,
 		db.Session{
 			ID: "session", Project: "project", Machine: "push-machine",
 			Agent: "claude", CreatedAt: "2026-01-01T00:00:00Z",
-			DeletedAt: &deletedAt, DeletionCause: &cause,
+			DeletedAt: &deletedAt, DeletionCause: &cause, ArchivedAt: &archivedAt,
 		},
 		"marker", nil,
 	)
 	require.NoError(t, err)
-	require.Len(t, state.upsertArgs, 70)
+	require.Len(t, state.upsertArgs, 71)
 	assert.IsType(t, time.Time{}, state.upsertArgs[12].Value)
 	assert.IsType(t, time.Time{}, state.upsertArgs[13].Value)
 	assert.Equal(t, cause, state.upsertArgs[14].Value)
@@ -765,6 +766,7 @@ func TestPushSessionCarriesDeletionCauseInStableParameterOrder(t *testing.T) {
 	assert.Empty(t, state.upsertArgs[63].Value)
 	assert.Equal(t, false, state.upsertArgs[67].Value)
 	assert.Equal(t, "[]", state.upsertArgs[68].Value)
+	assert.Equal(t, time.Date(2026, 7, 13, 12, 34, 56, 0, time.UTC), state.upsertArgs[70].Value)
 
 	query := strings.ToLower(strings.Join(strings.Fields(state.upsertQuery), " "))
 	assert.Contains(t, query,
@@ -1145,6 +1147,9 @@ func TestSessionPushFingerprintDiffers(t *testing.T) {
 	}
 
 	fp1 := sessionPushFingerprint(base, base.Machine, "", "", "", "")
+	archived := base
+	archived.ArchivedAt = new("2026-09-01T12:00:00Z")
+	assert.NotEqual(t, fp1, sessionPushFingerprint(archived, archived.Machine, "", "", "", ""))
 
 	tests := []struct {
 		name   string

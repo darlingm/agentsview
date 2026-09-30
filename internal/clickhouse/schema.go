@@ -15,7 +15,7 @@ import (
 // added later ship as ADD COLUMN IF NOT EXISTS entries in the table specs,
 // so an older mirror upgrades in place; the version tells operators and
 // status output which shape a mirror has.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Metadata keys shared by every archive that pushes into the mirror.
 const (
@@ -214,6 +214,7 @@ var mirrorTables = []tableSpec{
 			col("transcript_fidelity", tString),
 			col("parser_malformed_lines", tInt),
 			col("is_truncated", tBool),
+			col("archived_at", tNullTime),
 			col("deleted_at", tNullTime),
 			col("deletion_cause", tNullString),
 			col("created_at", tNullTime),

@@ -150,6 +150,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at         TIMESTAMPTZ,
     started_at         TIMESTAMPTZ,
     ended_at           TIMESTAMPTZ,
+    archived_at        TIMESTAMPTZ,
     deleted_at         TIMESTAMPTZ,
     source_deleted_at  TIMESTAMPTZ,
     deletion_cause     TEXT,

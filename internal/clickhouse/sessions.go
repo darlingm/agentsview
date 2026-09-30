@@ -34,7 +34,7 @@ const sessionCols = `id, project, project_assigned, machine, agent,
 	cwd, git_branch, source_session_id, source_version, transcript_fidelity,
 	parser_malformed_lines, is_truncated,
 	secret_leak_count, secrets_rules_version,
-	deleted_at, deletion_cause, termination_status, transcript_revision`
+	archived_at, deleted_at, deletion_cause, termination_status, transcript_revision`
 
 // sessionFullCols is the GetSessionFull list. It adds file_path the way
 // PostgreSQL serve does, and omits volatile fingerprint columns
@@ -53,7 +53,7 @@ func scanSessionWithSource(
 	rs interface{ Scan(...any) error }, includeSource bool,
 ) (db.Session, error) {
 	var s db.Session
-	var createdAt, startedAt, endedAt, deletedAt any
+	var createdAt, startedAt, endedAt, archivedAt, deletedAt any
 	targets := []any{
 		&s.ID, &s.Project, &s.ProjectAssigned, &s.Machine, &s.Agent,
 		&s.AgentLabel, &s.Entrypoint, &s.SessionKind,
@@ -82,7 +82,7 @@ func scanSessionWithSource(
 		&s.SourceSessionID, &s.SourceVersion, &s.TranscriptFidelity,
 		&s.ParserMalformedLines, &s.IsTruncated,
 		&s.SecretLeakCount, &s.SecretsRulesVersion,
-		&deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision,
+		&archivedAt, &deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision,
 	}
 	if includeSource {
 		targets = append(targets, &s.FilePath)
@@ -96,6 +96,9 @@ func scanSessionWithSource(
 	}
 	if v := formatDBTime(endedAt); v != "" {
 		s.EndedAt = &v
+	}
+	if v := formatDBTime(archivedAt); v != "" {
+		s.ArchivedAt = &v
 	}
 	if v := formatDBTime(deletedAt); v != "" {
 		s.DeletedAt = &v
@@ -191,7 +194,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 	rootFilter := f
 	rootFilter.IncludeChildren = false
 	rootWhere, rootArgs := db.BuildSessionBaseFilterSQL(rootFilter, dialect)
-	canonicalRootWhere := db.BuildCanonicalRootWhere(dialect, "sessions", f.IncludeOrphans)
+	canonicalRootWhere := db.BuildSidebarRootWhere(f, dialect, "sessions")
 	var total int
 	if err := s.queryRowContext(ctx,
 		"SELECT toInt64(COUNT(*)) FROM sessions WHERE "+rootWhere+" AND "+canonicalRootWhere,
@@ -215,6 +218,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 			started_at,
 			ended_at,
 			created_at,
+			archived_at,
 			termination_status,
 			message_count,
 			user_message_count,
@@ -233,16 +237,20 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 	index := db.SidebarSessionIndex{Sessions: []db.SidebarSessionIndexRow{}, Total: total}
 	for rows.Next() {
 		var row db.SidebarSessionIndexRow
-		var startedAt, endedAt, createdAt any
+		var startedAt, endedAt, createdAt, sidebarArchivedAt any
 		if err := rows.Scan(
 			&row.ID, &row.ParentSessionID, &row.RelationshipType,
 			&row.Project, &row.ProjectAssigned, &row.Machine, &row.Agent,
 			&row.AgentLabel, &row.Entrypoint, &row.SessionKind, &row.DisplayName,
 			&startedAt, &endedAt, &createdAt,
+			&sidebarArchivedAt,
 			&row.TerminationStatus, &row.MessageCount, &row.UserMessageCount,
 			&row.TranscriptRevision, &row.IsAutomated, &row.IsTeammate,
 		); err != nil {
 			return db.SidebarSessionIndex{}, fmt.Errorf("scanning clickhouse sidebar session index: %w", err)
+		}
+		if v := formatDBTime(sidebarArchivedAt); v != "" {
+			row.ArchivedAt = &v
 		}
 		if v := formatDBTime(startedAt); v != "" {
 			row.StartedAt = &v
