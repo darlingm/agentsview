@@ -427,6 +427,38 @@ describe("SessionList visible hydration", () => {
     expect(document.body.textContent).toContain("hydrated visible title");
   });
 
+  it("reveals an initially selected child after sidebar hydration without looping", async () => {
+    sessions.sessions = [
+      makeSession({ id: "parent", is_index_only: true }),
+      makeSession({
+        id: "child",
+        parent_session_id: "parent",
+        relationship_type: "subagent",
+        is_index_only: true,
+      }),
+    ];
+    sessions.activeSessionId = "child";
+    let resolveHydration!: () => void;
+    const hydrate = vi.spyOn(sessions, "hydrateVisibleSessions").mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveHydration = resolve;
+      }),
+    );
+
+    component = mount(SessionList, { target: document.body });
+    await tick();
+    expect(document.querySelector(".session-item")).toBeNull();
+    expect(hydrate).toHaveBeenCalledOnce();
+
+    resolveHydration();
+    await tick();
+    await tick();
+
+    const child = document.querySelector<HTMLElement>('[data-session-id="child"]');
+    expect(child).not.toBeNull();
+    expect(child?.classList.contains("active")).toBe(true);
+  });
+
   it("renders renamed rows without waiting for hydration", async () => {
     sessions.sessions = [
       makeSession({
