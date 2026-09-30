@@ -1,7 +1,10 @@
 <script lang="ts">
-  import { onDestroy, onMount } from "svelte";
+  import { onDestroy, onMount, untrack } from "svelte";
   import { m } from "../../i18n/index.js";
   import { sessions } from "../../stores/sessions.svelte.js";
+  import { sessionArchive } from "../../stores/sessionArchive.svelte.js";
+  import { Button, Checkbox, showFlash } from "@kenn-io/kit-ui";
+  import { sync } from "../../stores/sync.svelte.js";
   import { ui } from "../../stores/ui.svelte.js";
   import { starred } from "../../stores/starred.svelte.js";
   import SessionItem from "./SessionItem.svelte";
@@ -65,6 +68,14 @@
     const element = containerRef;
     if (!element) return;
     return registerSessionList(element, navigateVisibleSession);
+  });
+
+  let previousArchiveFilter = sessionArchive.filter;
+  $effect(() => {
+    const filter = sessionArchive.filter;
+    if (filter === previousArchiveFilter) return;
+    previousArchiveFilter = filter;
+    untrack(() => sessions.refreshSidebarIfAttached());
   });
 
   $effect(() => {
@@ -352,6 +363,20 @@
     allVisibleSessionIds.filter((id) => sessions.selectedIds.has(id)),
   );
 
+  let selectedAllArchived = $derived(
+    visibleSelectedSessionIds.length > 0 && visibleSelectedSessionIds.every((id) =>
+      Boolean(sessions.sessions.find((session) => session.id === id)?.archived_at)),
+  );
+
+  async function handleBatchArchive() {
+    try {
+      await sessions.setArchived(visibleSelectedSessionIds, !selectedAllArchived);
+      sessions.clearSelection();
+    } catch {
+      showFlash(m.session_archive_error(), { tone: "danger" });
+    }
+  }
+
   async function handleBatchDelete() {
     if (batchDeleting) return;
     const ids = visibleSelectedSessionIds;
@@ -506,14 +531,25 @@
       onToggleGroupByAgent={toggleGroupByAgent}
       onToggleGroupByProject={toggleGroupByProject}
       onClearGroupMode={() => setGroupMode("none")}
-      extraActive={sessions.filters.termination !== ""}
-      onClearExtra={() => sessions.setTerminationFilter("")}
+      extraActive={sessions.filters.termination !== "" || sessionArchive.onlyArchived}
+      onClearExtra={() => {
+        sessionArchive.onlyArchived = false;
+        sessions.setTerminationFilter("");
+      }}
       extraSections={statusFilterSection}
     />
     {#if !ui.isMobileViewport}
       <SidebarToggleButton placement="sidebar" />
     {/if}
     {#snippet statusFilterSection()}
+      <div class="filter-section">
+        <Checkbox
+          checked={sessionArchive.onlyArchived}
+          onchange={(checked) => { sessionArchive.onlyArchived = checked; }}
+          label={m.session_archive_only()}
+          ariaLabel={m.session_archive_only()}
+        />
+      </div>
       <div class="filter-section">
         <div class="filter-section-label">{m.sidebar_status()}</div>
         <div class="pill-buttons">
@@ -561,6 +597,15 @@
         countLabel: formatNumber(visibleSelectedSessionIds.length),
       })}
     </span>
+    {#if !sync.readOnly}
+      <Button
+        size="sm"
+        surface="outline"
+        label={selectedAllArchived ? m.session_archive_unarchive() : m.session_archive_archive()}
+        onclick={handleBatchArchive}
+        disabled={visibleSelectedSessionIds.length === 0 || sessions.archiveBusy || batchDeleting}
+      />
+    {/if}
     <button
       class="batch-delete-btn"
       onclick={handleBatchDelete}
@@ -955,6 +1000,7 @@
 
   .batch-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 8px;
     padding: 5px 10px;

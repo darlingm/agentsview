@@ -72,7 +72,7 @@ const sessionBaseCols = `id, project, machine, agent,
 	cwd, git_branch, source_session_id, source_version,
 	group_key, transcript_fidelity,
 	parser_malformed_lines, is_truncated,
-	deleted_at, termination_status, transcript_revision, created_at,
+	archived_at, deleted_at, termination_status, transcript_revision, created_at,
 	EXISTS (
 		SELECT 1 FROM session_project_assignments spa
 		WHERE spa.session_id = sessions.id
@@ -107,7 +107,7 @@ const sessionPruneCols = `id, project, machine, agent,
 	cwd, git_branch, source_session_id, source_version,
 	group_key, transcript_fidelity,
 	parser_malformed_lines, is_truncated,
-	deleted_at, termination_status, transcript_revision,
+	archived_at, deleted_at, termination_status, transcript_revision,
 	file_path, file_size, created_at`
 
 // sessionFullCols includes all columns for a complete session record.
@@ -139,7 +139,7 @@ const sessionFullCols = `id, project, machine, agent,
 	group_key, transcript_fidelity,
 	parser_malformed_lines, is_truncated,
 	last_write_incremental,
-	deleted_at, deletion_cause, source_missing_at, trash_includes_codex_pages,
+	archived_at, deleted_at, deletion_cause, source_missing_at, trash_includes_codex_pages,
 	termination_status, file_path, file_size, file_mtime,
 	next_ordinal, last_entry_uuid,
 	file_inode, file_device,
@@ -200,7 +200,7 @@ func scanSessionRowWithSource(rs rowScanner, includeSource bool) (Session, error
 		&s.SourceSessionID, &s.SourceVersion,
 		&s.GroupKey, &s.TranscriptFidelity,
 		&s.ParserMalformedLines, &s.IsTruncated,
-		&s.DeletedAt, &s.TerminationStatus,
+		&s.ArchivedAt, &s.DeletedAt, &s.TerminationStatus,
 		&s.TranscriptRevision, &s.CreatedAt, &s.ProjectAssigned,
 	}
 	if includeSource {
@@ -374,6 +374,7 @@ type Session struct {
 	ParserMalformedLines        int             `json:"parser_malformed_lines,omitzero"`
 	IsTruncated                 bool            `json:"is_truncated,omitzero"`
 
+	ArchivedAt              *string `json:"archived_at,omitempty"`
 	DeletedAt               *string `json:"deleted_at,omitempty"`
 	TrashIncludesCodexPages bool    `json:"-"`
 	DeletionCause           *string `json:"-"`
@@ -531,6 +532,9 @@ func (db *DB) DecodeCursor(s string) (SessionCursor, error) {
 
 // SessionFilter specifies how to query sessions.
 type SessionFilter struct {
+	// ArchiveState is a list-only filter: empty/all, unarchived, or archived.
+	// The zero value retains archived sessions in search and reporting.
+	ArchiveState string
 	// IDs selects rows directly. Nil preserves discovery defaults; an empty
 	// non-nil slice matches nothing. Raw IDs expand over literal tilde suffixes.
 	IDs []string
@@ -659,6 +663,7 @@ type SessionPage struct {
 }
 
 type SidebarSessionIndexRow struct {
+	ArchivedAt         *string  `json:"archived_at,omitempty"`
 	ParentSessionIDs   []string `json:"parent_session_ids,omitempty"`
 	ID                 string   `json:"id"`
 	ParentSessionID    *string  `json:"parent_session_id,omitempty"`
@@ -786,7 +791,7 @@ func (db *DB) GetSidebarSessionIndex(
 	rootFilter := f
 	rootFilter.IncludeChildren = false
 	rootWhere, rootArgs := buildSessionBaseFilter(rootFilter)
-	canonicalRootWhere := buildCanonicalRootWhere(f.IncludeOrphans)
+	canonicalRootWhere := BuildSidebarRootWhere(f, SQLiteQueryDialect(), "sessions")
 	var total int
 	countQuery := "SELECT COUNT(*) FROM sessions WHERE " +
 		rootWhere + " AND " + canonicalRootWhere
@@ -817,6 +822,7 @@ func (db *DB) GetSidebarSessionIndex(
 			started_at,
 			ended_at,
 			created_at,
+			archived_at,
 			termination_status,
 			message_count,
 			user_message_count,
@@ -859,6 +865,7 @@ func (db *DB) GetSidebarSessionIndex(
 			&row.StartedAt,
 			&row.EndedAt,
 			&row.CreatedAt,
+			&row.ArchivedAt,
 			&row.TerminationStatus,
 			&row.MessageCount,
 			&row.UserMessageCount,
@@ -888,11 +895,14 @@ func (db *DB) getSidebarSessionIndexPage(
 	rootFilter.Starred = false
 	rootFilter.IncludeChildren = false
 	rootWhere, rootArgs := buildSessionBaseFilter(rootFilter)
-	canonicalRootWhere := buildCanonicalRootWhere(f.IncludeOrphans)
+	canonicalRootWhere := BuildSidebarRootWhere(f, SQLiteQueryDialect(), "sessions")
 	childAutomationPred := SQLiteQueryDialect().AutomatedScopePredicate(NormalizeAutomatedScope(f.AutomatedScope, f.ExcludeAutomated), "s.is_automated")
 	childAutomationWhere := ""
+	if pred := ArchiveStatePredicate(f.ArchiveState, "s"); pred != "" {
+		childAutomationWhere = " AND " + pred
+	}
 	if childAutomationPred != "" {
-		childAutomationWhere = " AND " + childAutomationPred
+		childAutomationWhere += " AND " + childAutomationPred
 	}
 
 	var total int
@@ -1077,6 +1087,7 @@ func (db *DB) getSidebarSessionIndexPage(
 			s.started_at,
 			s.ended_at,
 			s.created_at,
+			s.archived_at,
 			s.termination_status,
 			s.message_count,
 			s.user_message_count,
@@ -1114,6 +1125,7 @@ func (db *DB) getSidebarSessionIndexPage(
 			&row.StartedAt,
 			&row.EndedAt,
 			&row.CreatedAt,
+			&row.ArchivedAt,
 			&row.TerminationStatus,
 			&row.MessageCount,
 			&row.UserMessageCount,
@@ -1225,7 +1237,7 @@ func scanSessionFullRow(row interface{ Scan(...any) error }, id string) (*Sessio
 		&s.GroupKey, &s.TranscriptFidelity,
 		&s.ParserMalformedLines, &s.IsTruncated,
 		&s.LastWriteIncremental,
-		&s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
+		&s.ArchivedAt, &s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
 		&s.TerminationStatus, &s.FilePath, &s.FileSize,
 		&s.FileMtime, &s.NextOrdinal, &s.LastEntryUUID,
 		&s.FileInode, &s.FileDevice,
@@ -6033,7 +6045,7 @@ func (db *DB) FindPruneCandidates(ctx context.Context,
 			&s.SourceSessionID, &s.SourceVersion,
 			&s.GroupKey, &s.TranscriptFidelity,
 			&s.ParserMalformedLines, &s.IsTruncated,
-			&s.DeletedAt, &s.TerminationStatus, &s.TranscriptRevision,
+			&s.ArchivedAt, &s.DeletedAt, &s.TerminationStatus, &s.TranscriptRevision,
 			&s.FilePath, &s.FileSize, &s.CreatedAt,
 		)
 		if err != nil {
@@ -6418,7 +6430,7 @@ func (db *DB) ListSessionsModifiedBetween(
 			&s.GroupKey, &s.TranscriptFidelity,
 			&s.ParserMalformedLines, &s.IsTruncated,
 			&s.LastWriteIncremental,
-			&s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
+			&s.ArchivedAt, &s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
 			&s.TerminationStatus, &s.FilePath, &s.FileSize,
 			&s.FileMtime, &s.NextOrdinal, &s.LastEntryUUID,
 			&s.FileInode, &s.FileDevice,
@@ -6527,7 +6539,7 @@ func (db *DB) ListSessionsForMirrorWindow(
 			&s.GroupKey, &s.TranscriptFidelity,
 			&s.ParserMalformedLines, &s.IsTruncated,
 			&s.LastWriteIncremental,
-			&s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
+			&s.ArchivedAt, &s.DeletedAt, &s.DeletionCause, &s.SourceMissingAt, &s.TrashIncludesCodexPages,
 			&s.TerminationStatus, &s.FilePath, &s.FileSize,
 			&s.FileMtime, &s.NextOrdinal, &s.LastEntryUUID,
 			&s.FileInode, &s.FileDevice,

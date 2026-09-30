@@ -852,7 +852,7 @@
   "settings_search_empty": "Uyğun gələn parametr yoxdur",
   "settings_search_clear": "Axtarışı təmizlə",
   "settings_search_result": "{category} göstərilir",
-  "settings_search_keywords_appearance": "Tema kontrast düzülüş mətn şrift bloklar miqyas",
+  "settings_search_keywords_appearance": "Tema kontrast düzülüş mətn şrift bloklar miqyas Arxivlə Arxivlənib",
   "settings_search_keywords_language": "Dil yerli parametrlər tərcümə",
   "settings_search_keywords_date_ranges": "Tarix aralıq əlaqəli səhifələr",
   "settings_search_keywords_terminal": "Terminal davam et işə sal icra faylı arqumentlər mübadilə buferi",
@@ -2519,5 +2519,16 @@
   "tool_effectiveness_left_out": "Modelin girişindən kənarda qalanlar",
   "tool_effectiveness_model_saw": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"model {countLabel} bayt gördü","countPlural=other":"model {countLabel} bayt gördü"}}],
   "tool_effectiveness_open_session": "Sessiyanı aç",
-  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} mesaj","countPlural=other":"{countLabel} mesaj"}}]
+  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} mesaj","countPlural=other":"{countLabel} mesaj"}}],
+  "session_archive_visibility": "Sessiya siyahısında arxivlənmiş sessiyalar",
+  "session_archive_hide": "Gizlət",
+  "session_archive_dim": "Solğun göstər",
+  "session_archive_visibility_help": "Adi baxış zamanı görünüşü seçin. Axtarış və analitika dəyişmir.",
+  "session_archive_only": "Yalnız arxivlənmişləri göstər",
+  "session_archive_error": "Arxiv vəziyyətini dəyişmək mümkün olmadı. Yenidən cəhd edin.",
+  "session_archive_archive": "Arxivlə",
+  "session_archive_unarchive": "Arxivdən çıxar",
+  "session_archive_archived_label": "Arxivlənib",
+  "session_archive_archived_count": "Arxivlənib: {countLabel}",
+  "session_archive_unarchived_count": "Arxivdən çıxarılıb: {countLabel}"
 }

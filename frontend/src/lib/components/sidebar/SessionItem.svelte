@@ -9,6 +9,7 @@
     buildReadProgressToken,
     readProgress,
   } from "../../stores/read-progress.svelte.js";
+  import { sessionArchive } from "../../stores/sessionArchive.svelte.js";
   import { starred } from "../../stores/starred.svelte.js";
   import { formatRelativeTime, truncate } from "../../utils/format.js";
   import { agentColor as getAgentColor, agentLabel, entrypointBadge } from "../../utils/agents.js";
@@ -17,6 +18,7 @@
     previewMessage,
   } from "../../utils/messages.js";
   import {
+    ArchiveIcon,
     ChevronDownIcon,
     ChevronRightIcon,
     StarIcon,
@@ -289,6 +291,15 @@
     }
   }
 
+  async function handleArchive() {
+    closeContextMenu();
+    try {
+      await sessions.setArchived([session.id], !session.archived_at);
+    } catch {
+      showFlash(m.session_archive_error(), { tone: "danger" });
+    }
+  }
+
   async function handleDelete() {
     closeContextMenu();
     try {
@@ -388,6 +399,8 @@
 <div
   class="session-item"
   class:active={isActive}
+  class:archived={Boolean(session.archived_at)}
+  class:archived-dimmed={Boolean(session.archived_at) && sessionArchive.visibility === "dim" && !sessionArchive.onlyArchived}
   class:compact
   class:depth-1={depth === 1}
   class:depth-2={depth >= 2}
@@ -509,6 +522,11 @@
             ></span>
           {/if}
           <span class="session-count">{session.user_message_count}</span>
+          {#if session.archived_at}
+            <span class="archived-badge" role="img" aria-label={m.session_archive_archived_label()} title={m.session_archive_archived_label()}>
+              <ArchiveIcon size="11" aria-hidden="true" />
+            </span>
+          {/if}
           {#if hasSubagents}
             <UserRoundIcon class="group-hint-icon" size="9" strokeWidth="2" aria-hidden="true" />
           {/if}
@@ -585,6 +603,11 @@
     >
       {m.sidebar_row_open_in_new_tab()}
     </button>
+    {#if !sync.readOnly}
+      <button class="context-menu-item" disabled={sessions.archiveBusy} onclick={handleArchive}>
+        {session.archived_at ? m.session_archive_unarchive() : m.session_archive_archive()}
+      </button>
+    {/if}
     <button class="context-menu-item danger" onclick={handleDelete}>
       {m.sidebar_row_delete()}
     </button>
@@ -677,6 +700,35 @@
   .session-item.depth-1,
   .session-item.depth-2 {
     background: transparent;
+  }
+
+  .archived-badge {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+  }
+
+  .session-item.archived-dimmed {
+    --archive-text-opacity: 0.45;
+  }
+
+  /* Dim labels, not the row: controls and activity/unread indicators stay clear.
+     Hover, keyboard focus, and selection restore normal emphasis. */
+  .session-item.archived-dimmed:not(.active):not(:focus-within):not(:hover)
+    :is(
+      .session-name,
+      .session-project,
+      .session-time,
+      .session-count,
+      .archived-badge,
+      .side-meta
+    ) {
+    opacity: var(--archive-text-opacity);
+  }
+
+  .session-item.archived-dimmed:not(.active):not(:focus-within):not(:hover) .session-name {
+    color: var(--text-secondary);
+    font-weight: normal;
   }
 
   .session-item:hover {

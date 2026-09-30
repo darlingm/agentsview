@@ -5,6 +5,7 @@
 export interface DbSidebarSessionIndexRow {
   agent: string;
   agent_label?: string;
+  archived_at?: string;
   created_at: string;
   display_name?: string;
   /** @nullable */
