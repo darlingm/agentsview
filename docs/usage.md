@@ -997,6 +997,11 @@ Results use a compact row:
 Select a result to jump to that session and scroll directly to the matching
 message.
 
+Right-click a search result or recent session to open it in a new tab or copy
+its link with the browser's menu. You can also middle-click or `Ctrl`-click
+(`Cmd`-click on macOS) to open it in a new tab. Search result links open at the
+matching message; name-only matches open the session without a message target.
+
 ### Project and date filters
 
 Once your query is long enough to search, the palette shows project and date

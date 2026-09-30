@@ -181,6 +181,26 @@
     }
   }
 
+  function handleItemClick(e: MouseEvent, select: () => void) {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    select();
+  }
+
+  // Keep Space activation when a result has keyboard focus, as with the
+  // buttons these links replace. Enter uses the link's native click behavior.
+  function handleItemKeydown(e: KeyboardEvent) {
+    if (e.key !== " " || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) {
+      return;
+    }
+    e.preventDefault();
+    if (!e.repeat) {
+      (e.currentTarget as HTMLAnchorElement).click();
+    }
+  }
+
   // Route-first: commit the URL and let App's deep-link effect own
   // selection and hydration, exactly as a direct deep link does.
   // Selecting through the sessions store before the route commits
@@ -356,10 +376,15 @@
           <div class="palette-empty">{m.command_palette_no_results()}</div>
         {:else}
           {#each searchStore.results as result, i}
-            <button
+            <a
               class="palette-item"
               class:selected={i === selectedIndex}
-              onclick={() => selectSearchResult(result)}
+              href={router.buildSessionHref(
+                result.session_id,
+                result.ordinal === -1 ? undefined : { msg: String(result.ordinal) },
+              )}
+              onclick={(e) => handleItemClick(e, () => selectSearchResult(result))}
+              onkeydown={handleItemKeydown}
               onmouseenter={() => (selectedIndex = i)}
             >
               <span
@@ -389,21 +414,24 @@
                 class="item-id"
                 title={m.command_palette_copy_session_id()}
                 onclick={(e) => {
+                  e.preventDefault();
                   e.stopPropagation();
                   copyToClipboard(result.session_id);
                 }}
               >{stripIdPrefix(result.session_id, result.agent).slice(0, 8)}</span>
-            </button>
+            </a>
           {/each}
         {/if}
       {:else}
         <div class="palette-section-label">{m.command_palette_recent_sessions()}</div>
         {#each recentSessions as session, i}
           {@const preview = session.display_name ?? normalizeMessagePreview(session.first_message)}
-          <button
+          <a
             class="palette-item"
             class:selected={i === selectedIndex}
-            onclick={() => selectSession(session)}
+            href={router.buildSessionHref(session.id)}
+            onclick={(e) => handleItemClick(e, () => selectSession(session))}
+            onkeydown={handleItemKeydown}
             onmouseenter={() => (selectedIndex = i)}
           >
             <span class="item-dot" style:background={agentColor(session.agent)}></span>
@@ -415,7 +443,7 @@
             <span class="item-meta">
               {formatRelativeTime(session.ended_at ?? session.started_at)}
             </span>
-          </button>
+          </a>
         {/each}
       {/if}
     </div>
@@ -506,6 +534,7 @@
     width: 100%;
     padding: 6px 14px;
     text-align: left;
+    text-decoration: none;
     font-size: 13px;
     color: var(--text-primary);
     transition: background 0.05s;
