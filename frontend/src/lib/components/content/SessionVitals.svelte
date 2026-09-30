@@ -1,5 +1,6 @@
 <!-- ABOUTME: Session Vital Signs panel — replaces ActivityMinimap on the right column. -->
 <script lang="ts">
+  import TranscriptAppearance from "./TranscriptAppearance.svelte";
   import { onDestroy } from "svelte";
   import { CopyButton, Tooltip } from "@kenn-io/kit-ui";
   import { sessionTiming } from "../../stores/sessionTiming.svelte.js";
@@ -296,6 +297,7 @@
   }
 </script>
 
+<TranscriptAppearance>
 <div class="vital">
   <header class="vital-titlebar">
     <div class="vital-title">{m.session_vitals_title()}</div>
@@ -705,6 +707,7 @@
     <p class="v-error">{sessionTiming.error}</p>
   {/if}
 </div>
+</TranscriptAppearance>
 
 <style>
   /* Outer panel */

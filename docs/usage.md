@@ -583,6 +583,13 @@ Appearance:
 | Stream  | Continuous flow optimized for reading                     |
 | Skim    | Collapses tool calls to summary headers for fast skimming |
 
+In builds from `main` after version 0.44.0, Settings > Appearance also offers
+**Transcript style**. **Accented** keeps the existing presentation and is the
+default. **Outlined cards** gives user prompts a blue outline and tint, keeps
+assistant answers neutral, and outlines tool and supporting blocks in their
+existing colors. The style works with every layout, theme, and contrast mode.
+Nested content stays transparent so grouped blocks have one background tint.
+
 ### Focused Transcript Mode
 
 Focused mode strips intermediate tool calls, thinking blocks, and partial
@@ -600,7 +607,7 @@ mode preference is saved in localStorage.
 
 ### Message Display
 
-Each message has a colored left border indicating role:
+In the Accented style, messages have a colored left border indicating role:
 
 - **Blue** — user messages
 - **Purple** — assistant messages
@@ -1249,7 +1256,7 @@ organized into sections:
 | Section            | What You Can Configure                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
 | Language           | Interface language (Azerbaijani, English, French, Japanese, Korean, Spanish, Simplified Chinese, or Traditional Chinese)       |
-| Appearance         | Theme (light/dark), high-contrast mode, chart colors, message layout, zoom, block visibility             |
+| Appearance         | Theme (light/dark), high-contrast mode, chart colors, message layout, transcript style, zoom, block visibility             |
 | Date ranges        | Browser-local checkbox for linking date selections across Sessions, Usage, Activity, Trends, and Quality |
 | Session Providers  | Enable session providers, inspect their session directories, and add alternate agent homes               |
 | Archive content    | Choose whether future imports keep, drop, or offload tool-result images                                  |
@@ -1267,10 +1274,11 @@ Spanish is available in builds from `main` after version 0.44.0.
 
 ![Chart color palette setting](/docs/assets/generated/screenshots/settings-chart-colors.png)
 
-Language, theme, high contrast, message layout, zoom, block visibility, and
-Date ranges preferences use local storage in the current browser or desktop
-webview profile. Each profile keeps its own choices. The optional `zoom_level`
-setting supplies a default when no local zoom or text-size preference exists.
+Language, theme, high contrast, message layout, transcript style, zoom, block
+visibility, and date range preferences use local storage in the current browser
+or desktop webview profile. Each profile keeps its own choices. The optional
+`zoom_level` setting supplies a default when no local zoom or text-size
+preference exists.
 
 Chart colors use the server-wide `chart_palette` setting in
 `~/.agentsview/config.toml`. Agent directory overrides, terminal settings, the
