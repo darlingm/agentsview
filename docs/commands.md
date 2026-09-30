@@ -156,7 +156,15 @@ the foreground. It remains attached to the terminal until you press `Ctrl+C`,
 unless `--background` is specified. This is the same writable server managed by
 `agentsview daemon`; the web UI and sync do not have separate lifecycles.
 
-If a compatible server is already running, `serve` reports its URL and exits.
+When a local writable daemon has a different version from the CLI, `serve` and
+commands that use the daemon restart it with the current CLI executable. This
+includes development builds and switches between release versions. A matching
+version is reused. Replacement preserves the daemon's launch options and checks
+archive compatibility before stopping it; an older CLI cannot replace a daemon
+whose archive data version it cannot open. Read-only replica servers are left
+running.
+
+If the matching server is already running, `serve` reports its URL and exits.
 Open that URL to use the web UI. Stopping the server with either `daemon stop`
 or `serve stop` also stops its sync and file watchers. `--no-sync` disables
 automatic sync in that process; it does not create a separate sync daemon.
@@ -751,14 +759,9 @@ endpoint. `session usage`, `token-use`, and `usage statusline` still wait for
 initial sync, including when they reuse a daemon started by daily usage.
 Statusline limits the complete wait and report request to 30 seconds.
 
-When the archive was written by a newer AgentsView build, usage reports read the
-saved archive without starting a daemon, provided its schema remains readable. A
-warning explains that session files and pricing are not refreshed. Upgrade
-AgentsView to resume syncing; the older binary cannot write to the newer
-archive. `--offline` also accepts a newer archive with a compatible schema.
-
-If the archive is older and requires a resync, run `agentsview daemon restart`
-and let the resync finish before retrying the offline command.
+Offline reads require an archive at the current data version. If an upgrade
+requires a resync, run `agentsview daemon restart` and let the resync finish
+before retrying the offline command.
 
 ```bash
 agentsview usage daily [flags]

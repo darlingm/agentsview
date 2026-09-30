@@ -21,7 +21,6 @@ import (
 	"go.kenn.io/agentsview/internal/postgres"
 	"go.kenn.io/agentsview/internal/service"
 	"go.kenn.io/agentsview/internal/servicehttp"
-	"go.kenn.io/agentsview/internal/update"
 )
 
 type transportMode int
@@ -256,11 +255,12 @@ func ensureTransportContext(
 	if tr.Mode == transportHTTP {
 		if (intent == transportIntentRead ||
 			intent == transportIntentArchiveWrite) &&
-			shouldUpgradeDaemonRuntime(tr.Runtime, version) {
+			shouldReplaceDaemonRuntime(tr.Runtime, version) {
 			if daemonAutostartDisabled() {
 				if intent == transportIntentRead {
-					return transport{}, appendDaemonRestartUpgradeHint(
-						errors.New("daemon restart required: running daemon is older than this client"),
+					return transport{}, errors.New(
+						"daemon restart required: running daemon version differs from this client; " +
+							"run `agentsview daemon restart` or unset AGENTSVIEW_NO_DAEMON to allow automatic replacement",
 					)
 				}
 				return tr, nil
@@ -284,7 +284,7 @@ func ensureTransportContext(
 		if rt, err := FindIncompatibleDaemonRuntime(
 			cfg.DataDir, cfg.AuthToken,
 		); err != nil && rt != nil &&
-			shouldUpgradeIncompatibleDaemonRuntime(rt, version) {
+			shouldReplaceIncompatibleDaemonRuntime(rt, version) {
 			if err := guardDaemonAutoStartConfig(*cfg); err != nil {
 				return transport{}, err
 			}
@@ -420,29 +420,21 @@ func waitForBackgroundLaunchBeforeArchiveWrite(
 	return true, ctx.Err()
 }
 
-func shouldUpgradeDaemonRuntime(rt *DaemonRuntime, currentVersion string) bool {
-	if rt == nil || rt.ReadOnly {
-		return false
-	}
-	if update.IsDevBuildVersion(currentVersion) {
-		return false
-	}
-	if rt.Record.Version == "" {
-		return true
-	}
-	return update.IsNewer(currentVersion, rt.Record.Version)
+func shouldReplaceDaemonRuntime(rt *DaemonRuntime, currentVersion string) bool {
+	return rt != nil && !rt.ReadOnly && rt.Record.Version != currentVersion
 }
 
-func shouldUpgradeIncompatibleDaemonRuntime(
+func shouldReplaceIncompatibleDaemonRuntime(
 	rt *DaemonRuntime, currentVersion string,
 ) bool {
 	if rt == nil {
 		return false
 	}
-	if !shouldUpgradeDaemonRuntime(rt, currentVersion) {
+	if !shouldReplaceDaemonRuntime(rt, currentVersion) {
 		return false
 	}
-	if rt.API > daemonAPIVersion || rt.Data > db.CurrentDataVersion() {
+	// Restarting replaces the HTTP API, but cannot downgrade the archive.
+	if rt.Data > db.CurrentDataVersion() {
 		return false
 	}
 	return true

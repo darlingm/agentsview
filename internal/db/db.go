@@ -558,7 +558,7 @@ type DataVersionTooNewError struct {
 
 func (e *DataVersionTooNewError) Error() string {
 	return fmt.Sprintf(
-		"database data version %d is newer than this agentsview binary's data version %d, so this binary cannot write to the archive or sync it. Use an AgentsView build with data version %d or newer, or restore an archive backup compatible with data version %d. The archive was not modified",
+		"database data version %d is newer than this agentsview binary's data version %d, so this binary cannot safely open the archive. Use an AgentsView build with data version %d or newer, or restore an archive backup compatible with data version %d. The archive was not modified",
 		e.DatabaseVersion, e.BinaryVersion,
 		e.DatabaseVersion, e.BinaryVersion,
 	)
@@ -1577,17 +1577,6 @@ func exportSchemaUpgradeTarget(err error) (*SchemaUpgradeRequiredError, bool) {
 func exportSchemaUpgradeEligible(
 	ctx context.Context, tx *sql.Tx, target *SchemaUpgradeRequiredError,
 ) (bool, error) {
-	// Keep the version check and schema writes in one SQLite snapshot.
-	// An intervening writer then prevents this transaction from writing.
-	var version int
-	if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return false, fmt.Errorf("checking export upgrade data version: %w", err)
-	}
-	if version > dataVersion {
-		return false, &DataVersionTooNewError{
-			DatabaseVersion: version, BinaryVersion: dataVersion,
-		}
-	}
 	var tableExists bool
 	if err := tx.QueryRowContext(ctx, `
 		SELECT EXISTS(
@@ -1613,9 +1602,6 @@ func UpgradeExportSchemaInPlace(ctx context.Context, path string, cause error) (
 	target, ok := exportSchemaUpgradeTarget(cause)
 	if !ok {
 		return fmt.Errorf("schema gap is not eligible for export upgrade: %w", cause)
-	}
-	if err := CheckDataVersion(ctx, path); err != nil {
-		return err
 	}
 	info, err := os.Stat(path)
 	if err != nil {
@@ -1721,7 +1707,6 @@ func initializeSchemaUpgradeMetadata(ctx context.Context, tx *sql.Tx) error {
 // OpenReadOnly opens an existing SQLite database without running migrations or
 // any writable initialization. It is intended for cold CLI reads and recovery
 // cases where another process may own writable access to the archive.
-// Newer parser data versions are readable when the required schema is present.
 func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 	if err := checkSimpleFTSRuntimeConfig(); err != nil {
 		return nil, err
@@ -1753,20 +1738,19 @@ func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 		return nil, fmt.Errorf("opening read-only reader: %w", err)
 	}
 
-	version, err := readUserVersion(ctx, reader)
+	schemaStale, dataStale, err := probeDatabaseConn(ctx, reader)
 	if err != nil {
 		reader.Close()
 		return nil, fmt.Errorf(
 			"checking read-only database: %w", err,
 		)
 	}
+	if schemaStale {
+		reader.Close()
+		return nil, errors.New("opening read-only database: schema is stale or incomplete")
+	}
 	if err := checkReadOnlySchemaCompatibility(ctx, reader); err != nil {
 		reader.Close()
-		if version > dataVersion {
-			return nil, errors.Join(err, &DataVersionTooNewError{
-				DatabaseVersion: version, BinaryVersion: dataVersion,
-			})
-		}
 		return nil, err
 	}
 
@@ -1774,7 +1758,7 @@ func OpenReadOnly(ctx context.Context, path string) (*DB, error) {
 		path: path, readOnly: true,
 		usageCache: newUsageCacheManager(path),
 	}
-	db.dataStale.Store(version < dataVersion)
+	db.dataStale.Store(dataStale)
 	db.usageCache.attachArchive(db)
 	db.reader.Store(reader)
 	db.cursorSecret = make([]byte, 32)

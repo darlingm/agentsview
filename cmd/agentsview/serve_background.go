@@ -124,7 +124,7 @@ func reportBackgroundLaunchInProgress(dataDir, authToken string) {
 		context.Background(), dataDir, authToken, backgroundServeReadyTimeout,
 	)
 	if rt := FindDaemonRuntime(dataDir, authToken); rt != nil &&
-		!rt.ReadOnly && !shouldUpgradeDaemonRuntime(rt, version) {
+		!rt.ReadOnly && !shouldReplaceDaemonRuntime(rt, version) {
 		fmt.Printf(
 			"agentsview already running at %s (pid %d)\n",
 			urlFromDaemonRuntime(rt),
@@ -459,7 +459,7 @@ func ensureBackgroundServe(
 		}
 		if rt := FindDaemonRuntime(cfg.DataDir, cfg.AuthToken); rt != nil &&
 			!rt.ReadOnly {
-			if shouldUpgradeDaemonRuntime(rt, version) {
+			if shouldReplaceDaemonRuntime(rt, version) {
 				return nil, errors.New("agentsview serve --background is already in progress")
 			}
 			return rt, nil
@@ -490,7 +490,7 @@ func ensureBackgroundServe(
 probeDaemon:
 	if rt := FindDaemonRuntime(cfg.DataDir, cfg.AuthToken); rt != nil &&
 		!rt.ReadOnly {
-		if shouldUpgradeDaemonRuntime(rt, version) {
+		if shouldReplaceDaemonRuntime(rt, version) {
 			if waited, err := waitForExternalServeStartupBeforeReplacement(
 				ctx, cfg.DataDir, cfg.AuthToken, waitTimeout,
 			); waited {
@@ -507,7 +507,7 @@ probeDaemon:
 			}
 			if err := stopDaemonRuntimeForUpgrade(ctx, *cfg, rt); err != nil {
 				return nil, fmt.Errorf(
-					"stopping older daemon before restart: %w",
+					"stopping daemon with different version before restart: %w",
 					err,
 				)
 			}
@@ -522,7 +522,7 @@ probeDaemon:
 	if rt, err := findIncompatibleWritableDaemonRuntime(
 		cfg.DataDir, cfg.AuthToken,
 	); err != nil {
-		if rt != nil && shouldUpgradeIncompatibleDaemonRuntime(rt, version) {
+		if rt != nil && shouldReplaceIncompatibleDaemonRuntime(rt, version) {
 			if waited, err := waitForExternalServeStartupBeforeReplacement(
 				ctx, cfg.DataDir, cfg.AuthToken, waitTimeout,
 			); waited {
@@ -539,7 +539,7 @@ probeDaemon:
 			}
 			if stopErr := stopDaemonRuntimeForUpgrade(ctx, *cfg, rt); stopErr != nil {
 				return nil, fmt.Errorf(
-					"stopping older daemon before restart: %w",
+					"stopping daemon with different version before restart: %w",
 					stopErr,
 				)
 			}
@@ -566,7 +566,7 @@ probeDaemon:
 		if rt, err := findIncompatibleWritableDaemonRuntime(
 			cfg.DataDir, cfg.AuthToken,
 		); err != nil {
-			if rt != nil && shouldUpgradeIncompatibleDaemonRuntime(rt, version) {
+			if rt != nil && shouldReplaceIncompatibleDaemonRuntime(rt, version) {
 				if waited, err := waitForExternalServeStartupBeforeReplacement(
 					ctx, cfg.DataDir, cfg.AuthToken, waitTimeout,
 				); waited {
@@ -583,7 +583,7 @@ probeDaemon:
 				}
 				if stopErr := stopDaemonRuntimeForUpgrade(ctx, *cfg, rt); stopErr != nil {
 					return nil, fmt.Errorf(
-						"stopping older daemon before restart: %w",
+						"stopping daemon with different version before restart: %w",
 						stopErr,
 					)
 				}

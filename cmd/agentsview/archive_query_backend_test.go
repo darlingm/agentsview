@@ -1,10 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"database/sql"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -165,37 +162,6 @@ func TestLocalArchiveQuerySessionUsageNoSyncSkipsSingleSessionSync(
 	})
 	assert.NotContains(t, stderr, "warning: sync failed")
 	assert.NotContains(t, stderr, "warning: pricing seed failed")
-}
-
-func TestLocalActivityReportPricesNewerArchiveWithoutWriting(t *testing.T) {
-	dataDir := t.TempDir()
-	dbPath := filepath.Join(dataDir, "sessions.db")
-	writer := dbtest.OpenTestDBAt(t, dbPath)
-	seedUsageDailyExportMetadataFixture(t, writer, fallbackPricedModel(t))
-	require.NoError(t, writer.Close())
-	conn, err := sql.Open("sqlite3", dbPath)
-	require.NoError(t, err)
-	_, err = conn.ExecContext(t.Context(),
-		fmt.Sprintf("PRAGMA user_version = %d", db.CurrentDataVersion()+1))
-	require.NoError(t, err)
-	require.NoError(t, conn.Close())
-	before, err := os.ReadFile(dbPath)
-	require.NoError(t, err)
-
-	backend, cleanup, err := resolveArchiveQueryBackendWithConfig(t.Context(), config.Config{
-		DataDir: dataDir, DBPath: dbPath,
-	}, archiveQueryPolicy{})
-	require.NoError(t, err)
-	t.Cleanup(cleanup)
-	report, err := backend.ActivityReport(t.Context(), ActivityReportConfig{
-		Preset: "day", Date: "2026-06-01", Timezone: "UTC",
-	})
-	require.NoError(t, err)
-	assert.Greater(t, report.Totals.Cost.Microdollars, int64(250_000),
-		"fallback pricing must add token costs to the saved $0.25 cost")
-	after, err := os.ReadFile(dbPath)
-	require.NoError(t, err)
-	assert.True(t, bytes.Equal(before, after), "activity report must not modify a newer archive")
 }
 
 // TestLocalSessionUsageRefreshesSubagentTranscripts covers the freshness

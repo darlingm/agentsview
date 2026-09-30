@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -78,13 +77,6 @@ func resolveArchiveQueryBackendWithConfig(
 	cfg config.Config,
 	policy archiveQueryPolicy,
 ) (archiveQueryBackend, func(), error) {
-	var newerArchive *db.DataVersionTooNewError
-	if !policy.Offline {
-		newerArchive, _ = errors.AsType[*db.DataVersionTooNewError](db.CheckDataVersion(ctx, cfg.DBPath))
-		if newerArchive != nil {
-			policy.Offline = true
-		}
-	}
 	if !policy.Offline {
 		tr, err := resolveArchiveQueryTransport(ctx, &cfg, policy)
 		if err != nil {
@@ -126,11 +118,6 @@ func resolveArchiveQueryBackendWithConfig(
 	database, writeLock, err := openArchiveQueryDB(ctx, cfg, policy.Offline)
 	if err != nil {
 		return nil, nil, err
-	}
-	if newerArchive != nil {
-		fmt.Fprintf(os.Stderr,
-			"warning: archive data version %d is newer than this binary's %d; reading saved archive read-only. Session files and pricing are not refreshed. Use an AgentsView build with data version %d or newer to resume syncing.\n",
-			newerArchive.DatabaseVersion, newerArchive.BinaryVersion, newerArchive.DatabaseVersion)
 	}
 	cleanup := func() { closeWriteDB(database, writeLock) }
 	return localArchiveQueryBackend{
@@ -255,7 +242,6 @@ func (b localArchiveQueryBackend) ActivityReport(
 	cfg ActivityReportConfig,
 ) (activity.Report, error) {
 	ensureFreshData(ctx, b.cfg, b.database, b.skipFreshData)
-	cfg.Offline = cfg.Offline || b.offline
 	return resolveActivityReportPriced(
 		cfg, b.database, b.cfg.CustomModelPricing,
 	)

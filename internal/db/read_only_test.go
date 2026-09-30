@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -128,28 +127,6 @@ func TestOpenReadOnlyExistingDBDoesNotWrite(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, before.Size(), after.Size())
 	assert.Equal(t, before.ModTime(), after.ModTime())
-}
-
-func TestOpenReadOnlyNewerDataVersion(t *testing.T) {
-	path := createClosedTestDB(t, tempDBPath(t, "sessions.db"), func(d *DB) {
-		require.NoError(t, d.SetSyncState(t.Context(), "saved_value", "preserved"))
-	})
-	execRawSQLite(t, path, fmt.Sprintf("PRAGMA user_version = %d", dataVersion+1))
-	before, err := os.ReadFile(path)
-	require.NoError(t, err)
-
-	readonly := openReadOnlyTestDB(t, path)
-	value, err := readonly.GetSyncState(t.Context(), "saved_value")
-	require.NoError(t, err)
-	assert.Equal(t, "preserved", value)
-	assert.False(t, readonly.NeedsResync())
-	require.ErrorIs(t, readonly.SetSyncState(t.Context(), "saved_value", "changed"), ErrReadOnly)
-	require.NoError(t, readonly.Close())
-
-	after, err := os.ReadFile(path)
-	require.NoError(t, err)
-	assert.Equal(t, before, after)
-	assert.True(t, IsDataVersionTooNew(CheckDataVersion(t.Context(), path)))
 }
 
 // TestOpenReadOnlyReaderRefusesWritesAtSQLiteLevel pins the read-only
@@ -304,15 +281,6 @@ func TestOpenReadOnlyRejectsMissingMigratedColumn(t *testing.T) {
 	// trigger or index exists.
 	execRawSQLite(t, path, "ALTER TABLE sessions DROP COLUMN deletion_cause")
 	requireOpenReadOnlyFails(t, path, "schema missing sessions.deletion_cause")
-
-	// A newer data version must not bypass the same read-schema contract.
-	execRawSQLite(t, path, fmt.Sprintf("PRAGMA user_version = %d", dataVersion+1))
-	readonly, err := OpenReadOnly(t.Context(), path)
-	require.Error(t, err)
-	assert.Nil(t, readonly)
-	assert.True(t, IsSchemaUpgradeRequired(err))
-	assert.True(t, IsDataVersionTooNew(err))
-	assert.Contains(t, err.Error(), "schema missing sessions.deletion_cause")
 }
 
 func TestOpenReadOnlyRejectsMissingUsageCacheIndexes(t *testing.T) {

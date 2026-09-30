@@ -1114,60 +1114,6 @@ func TestRunUsageDailyOfflineUsesReadOnlyDBWhenWriteLockHeld(t *testing.T) {
 		"offline read-only usage must preserve custom pricing")
 }
 
-func TestRunUsageDailyReadsNewerArchiveWithoutStartingDaemon(t *testing.T) {
-	for _, mode := range []string{"default", "no-sync", "no-daemon"} {
-		t.Run(mode, func(t *testing.T) {
-			dataDir := newAgentDataDir(t)
-			t.Setenv("AGENTSVIEW_NO_DAEMON", "")
-			if mode == "no-daemon" {
-				t.Setenv("AGENTSVIEW_NO_DAEMON", "1")
-			}
-			dbPath := sessionsDBPath(dataDir)
-			writable := dbtest.OpenTestDBAt(t, dbPath)
-			startedAt := "2026-07-03T12:00:00Z"
-			require.NoError(t, writable.UpsertSession(t.Context(), db.Session{
-				ID: "saved-usage", Project: "pricing", Machine: "local", Agent: "codex",
-				StartedAt: &startedAt,
-			}))
-			require.NoError(t, writable.ReplaceSessionUsageEvents(t.Context(), "saved-usage", []db.UsageEvent{{
-				Source: "codex", Model: "gpt-5.5", InputTokens: 100,
-				OccurredAt: startedAt, DedupKey: "request-1",
-			}}))
-			require.NoError(t, writable.Close())
-			conn, err := sql.Open("sqlite3", dbPath)
-			require.NoError(t, err)
-			_, err = conn.ExecContext(t.Context(), fmt.Sprintf("PRAGMA user_version = %d", db.CurrentDataVersion()+1))
-			require.NoError(t, err)
-			require.NoError(t, conn.Close())
-			before, err := os.ReadFile(dbPath)
-			require.NoError(t, err)
-
-			var out string
-			stderr := captureStderr(t, func() {
-				out = captureStdout(t, func() {
-					err = runUsageDailyResult(UsageDailyConfig{
-						JSON: true, NoSync: mode == "no-sync", Since: "2026-07-03", Until: "2026-07-03", Timezone: "UTC",
-					})
-				})
-			})
-			require.NoError(t, err)
-			var got db.DailyUsageResult
-			require.NoError(t, json.Unmarshal([]byte(out), &got))
-			require.Len(t, got.Daily, 1)
-			assert.Equal(t, "2026-07-03", got.Daily[0].Date)
-			assert.Equal(t, 100, got.Totals.InputTokens)
-			assert.Equal(t, money.Money{Microdollars: 500}, got.Totals.TotalCost)
-			assert.Contains(t, stderr, "saved archive read-only")
-			assert.Contains(t, stderr, "not refreshed")
-			assert.NotContains(t, stderr, "Starting agentsview")
-			assert.NoFileExists(t, serveLogPath(dataDir))
-			after, err := os.ReadFile(dbPath)
-			require.NoError(t, err)
-			assert.Equal(t, before, after)
-		})
-	}
-}
-
 func TestApplyFallbackPricingPreservesReadOnlyLongContextBands(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "sessions.db")
 	writable := dbtest.OpenTestDBAt(t, dbPath)

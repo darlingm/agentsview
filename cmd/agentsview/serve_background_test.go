@@ -1445,12 +1445,12 @@ func TestEnsureBackgroundServeReplacesStaleDaemonAfterExternalStartupAbort(
 	assert.Equal(t, newPort, rt.Port)
 }
 
-func TestEnsureBackgroundServeIncompatibleDaemonReturnsError(t *testing.T) {
+func TestEnsureBackgroundServeSameVersionIncompatibleDaemonReturnsError(t *testing.T) {
 	dir := runtimeTestDir(t)
 	host, port := testPingServer(t)
 	writeRuntimeRecordFixture(t, dir, daemonRuntimeRecord(
 		host, port,
-		withRuntimeVersion("old"),
+		withRuntimeVersion("test"),
 		withRuntimeAPIVersion(0),
 	))
 
