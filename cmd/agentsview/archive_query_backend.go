@@ -255,6 +255,7 @@ func (b localArchiveQueryBackend) ActivityReport(
 	cfg ActivityReportConfig,
 ) (activity.Report, error) {
 	ensureFreshData(ctx, b.cfg, b.database, b.skipFreshData)
+	cfg.Offline = cfg.Offline || b.offline
 	return resolveActivityReportPriced(
 		cfg, b.database, b.cfg.CustomModelPricing,
 	)
