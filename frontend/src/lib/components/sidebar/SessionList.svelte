@@ -447,7 +447,9 @@
         // Auto-expand the correct sub-group.
         next.add(`subagent:${g.key}`);
         next.add(`team:${g.key}`);
-        expandedGroups = next;
+        // Initial hydration may still be holding back the expanded rows.
+        // Do not reschedule this effect with an unchanged expansion set.
+        if (next.size !== expandedGroups.size) expandedGroups = next;
         return;
       }
       return;
