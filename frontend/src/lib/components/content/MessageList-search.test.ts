@@ -89,6 +89,7 @@ beforeEach(() => {
   ui.setTranscriptMode("focused");
   ui.messageLayout = "skim";
   ui.sortNewestFirst = false;
+  ui.toolGroupsExpanded = true;
   ui.followLatest = false;
   ui.selectedOrdinal = null;
   vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) =>
@@ -108,12 +109,58 @@ afterEach(async () => {
   ui.setTranscriptMode("normal");
   ui.messageLayout = "default";
   ui.sortNewestFirst = false;
+  ui.toolGroupsExpanded = true;
   document.body.innerHTML = "";
   vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
 describe("MessageList search visibility", () => {
+  it("keeps a collapsed group closed during live updates and resets on preference or session changes", async () => {
+    ui.showAllBlocks();
+    ui.setTranscriptMode("normal");
+    ui.messageLayout = "default";
+    component = mount(MessageList, { target: document.body });
+    await tick();
+    const header = () => document.querySelector<HTMLButtonElement>(".tool-group-toggle")!;
+    const body = () => document.querySelector<HTMLElement>(".tool-group-body")!;
+    header().click();
+    await tick();
+    expect(body().hidden).toBe(true);
+    messages.messages = [
+      ...messages.messages,
+      message(3, "", {
+        has_tool_use: true,
+        tool_calls: [{ category: "", tool_name: "Bash", input_json: '{"command":"pwd"}' }],
+      }),
+    ];
+    messages.messageCount = 4;
+    await tick();
+    expect(body().hidden).toBe(true);
+    expect(header().textContent).toContain("2 tool calls");
+    ui.sortNewestFirst = true;
+    await tick();
+    expect(body().hidden).toBe(true);
+
+    ui.toolGroupsExpanded = false;
+    await tick();
+    header().click();
+    await tick();
+    expect(body().hidden).toBe(false);
+    ui.toolGroupsExpanded = true;
+    await tick();
+    ui.toolGroupsExpanded = false;
+    await tick();
+    expect(body().hidden).toBe(true);
+
+    header().click();
+    await tick();
+    expect(body().hidden).toBe(false);
+    sessions.activeSessionId = "another-session";
+    await tick();
+    expect(body().hidden).toBe(true);
+  });
+
   it("respects block filters and focused mode while searching without changing preferences", async () => {
     component = mount(MessageList, { target: document.body });
     await tick();

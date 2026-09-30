@@ -2289,6 +2289,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "刪除有效載荷會改寫儲存的資料列。在執行 agentsview db compact 之前，封存檔大小保持不變。",
+  "appearance_expand_tool_groups": "預設展開工具呼叫群組",
   "appearance_render_unknown_xml_blocks": "將未知 XML 區塊以預格式化文字呈現",
   "go_to_session_title": "跳轉至對話",
   "go_to_session_input_label": "對話 ID 或 UUID",

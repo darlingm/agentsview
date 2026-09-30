@@ -2374,6 +2374,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "Quitar las cargas útiles reescribe las filas almacenadas. El archivo de almacenamiento conserva su tamaño hasta que ejecutes agentsview db compact.",
+  "appearance_expand_tool_groups": "Expandir los grupos de llamadas a herramientas por defecto",
   "appearance_render_unknown_xml_blocks": "Mostrar los bloques XML desconocidos como texto preformateado",
   "go_to_session_title": "Ir a sesión",
   "go_to_session_input_label": "ID o UUID de sesión",

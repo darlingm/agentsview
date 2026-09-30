@@ -50,6 +50,7 @@ const BLOCK_FILTER_KEY = "agentsview-block-filters";
 const TRANSCRIPT_MODE_KEY = "agentsview-transcript-mode";
 const UNKNOWN_XML_PREFORMATTED_KEY = "agentsview-unknown-xml-preformatted";
 const VITALS_KEY = "agentsview-session-vitals";
+const TOOL_GROUPS_EXPANDED_KEY = "agentsview-tool-groups-expanded";
 const VITALS_CALLS_EXPANDED_KEY = "agentsview-session-vitals-calls-expanded";
 const SIGNAL_PANEL_KEY = "agentsview-signal-panel";
 const FOLLOW_LATEST_KEY = "agentsview-follow-latest";
@@ -277,6 +278,7 @@ class UIStore {
   sidebarOpen: boolean = $state(true);
   isMobileViewport: boolean = $state(false);
   vitalsOpen: boolean = $state(readStoredBool(VITALS_KEY, false));
+  toolGroupsExpanded: boolean = $state(readStoredBool(TOOL_GROUPS_EXPANDED_KEY, true));
   vitalsCallsExpanded: boolean = $state(readStoredBool(VITALS_CALLS_EXPANDED_KEY, true));
   signalPanelOpen: boolean = $state(readStoredBool(SIGNAL_PANEL_KEY, false));
   followLatest: boolean = $state(readStoredBool(FOLLOW_LATEST_KEY, false));
@@ -375,6 +377,14 @@ class UIStore {
       $effect(() => {
         try {
           localStorage?.setItem(VITALS_KEY, String(this.vitalsOpen));
+        } catch {
+          // ignore
+        }
+      });
+
+      $effect(() => {
+        try {
+          localStorage?.setItem(TOOL_GROUPS_EXPANDED_KEY, String(this.toolGroupsExpanded));
         } catch {
           // ignore
         }

@@ -2372,6 +2372,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "Removing payloads rewrites the stored rows. The archive file keeps its size until you run agentsview db compact.",
+  "appearance_expand_tool_groups": "Expand tool-call groups by default",
   "appearance_render_unknown_xml_blocks": "Render unknown XML blocks as preformatted text",
   "go_to_session_title": "Go to session",
   "go_to_session_input_label": "Session ID or UUID",

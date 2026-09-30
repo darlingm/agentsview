@@ -2371,6 +2371,7 @@
     }
   ],
   "settings_image_cleanup_compact_note": "La suppression des charges réécrit les lignes stockées. La taille du fichier d'archive reste inchangée jusqu'à ce que vous exécutiez agentsview db compact.",
+  "appearance_expand_tool_groups": "Développer les groupes d’appels d’outils par défaut",
   "appearance_render_unknown_xml_blocks": "Afficher les blocs XML inconnus en texte préformaté",
   "go_to_session_title": "Accéder à une session",
   "go_to_session_input_label": "ID ou UUID de session",

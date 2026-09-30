@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { mount, tick, unmount } from "svelte";
 import type { DbMessage as Message } from "../../api/generated/index.js";
 import { messages } from "../../stores/messages.svelte.js";
@@ -61,6 +61,18 @@ function makeMessage(ordinal: number): Message {
   };
 }
 
+function makeToolMessage(ordinal: number): Message {
+  return {
+    ...makeMessage(ordinal),
+    id: 700000 + ordinal,
+    role: "assistant",
+    content: "",
+    content_length: 0,
+    has_tool_use: true,
+    tool_calls: [{ tool_name: "Bash", category: "Bash", input_json: '{"command":"pwd"}' }],
+  };
+}
+
 function deferred<T>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
   const promise = new Promise<T>((res) => {
@@ -98,6 +110,7 @@ describe("MessageList follow cancellation", () => {
     ui.followLatest = true;
     ui.followLatestRequest = 1;
     ui.sortNewestFirst = false;
+    ui.toolGroupsExpanded = true;
     ui.showAllBlocks();
     ui.setTranscriptMode("normal");
     ui.selectedOrdinal = null;
@@ -123,6 +136,7 @@ describe("MessageList follow cancellation", () => {
     messages.clear();
     sessions.activeSessionId = null;
     ui.followLatest = false;
+    ui.toolGroupsExpanded = true;
     readProgress.reset();
     document.body.innerHTML = "";
   });
@@ -211,6 +225,118 @@ describe("MessageList follow cancellation", () => {
     const divider = document.querySelector(".read-progress-divider");
     expect(divider).toBeNull();
   });
+
+  it.each([
+    { newestFirst: false, endpoint: "boundary" },
+    { newestFirst: true, endpoint: "boundary" },
+    { newestFirst: false, endpoint: "latest" },
+    { newestFirst: true, endpoint: "latest" },
+  ])(
+    "acknowledges a visible collapsed group containing the $endpoint, newestFirst=$newestFirst",
+    async ({ newestFirst, endpoint }) => {
+      messages.messages = [
+        makeMessage(0),
+        makeToolMessage(1),
+        makeToolMessage(2),
+        endpoint === "latest" ? makeToolMessage(3) : makeMessage(3),
+      ];
+      messages.messageCount = 4;
+      messages.activeSessionUnreadOrdinal = endpoint === "boundary" ? 2 : 0;
+      messages.hasOlder = false;
+      ui.followLatest = false;
+      ui.sortNewestFirst = newestFirst;
+      ui.toolGroupsExpanded = false;
+      virtualizerMock.scrollRect.height = 400;
+      setVirtualRows(endpoint === "latest" ? 2 : 3);
+      readProgress.baseline("s1", "previous", 0);
+      component = mount(MessageList, { target: document.body });
+      await tick();
+
+      const scroller = document.querySelector<HTMLElement>(".message-list-scroll")!;
+      const header = document.querySelector<HTMLElement>(".tool-group-header")!;
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 800, 400));
+      vi.spyOn(header, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 200, 800, 24));
+      expect(document.querySelector<HTMLElement>(".tool-group-body")!.hidden).toBe(true);
+      scroller.dispatchEvent(new Event("scroll"));
+
+      await vi.waitFor(() => {
+        expect(readProgress.get("s1")).toMatchObject({ token: "current", ordinal: 3 });
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "does not count an offscreen collapsed header, newestFirst=%s",
+    async (newestFirst) => {
+      messages.messages = [1, 2].map(makeToolMessage);
+      messages.messageCount = 3;
+      messages.activeSessionUnreadOrdinal = 1;
+      messages.hasOlder = false;
+      ui.followLatest = false;
+      ui.sortNewestFirst = newestFirst;
+      ui.toolGroupsExpanded = false;
+      setVirtualRows(1);
+      readProgress.baseline("s1", "previous", 0);
+      component = mount(MessageList, { target: document.body });
+      await tick();
+
+      const scroller = document.querySelector<HTMLElement>(".message-list-scroll")!;
+      const header = document.querySelector<HTMLElement>(".tool-group-header")!;
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 800, 200));
+      const headerRect = vi
+        .spyOn(header, "getBoundingClientRect")
+        .mockReturnValue(new DOMRect(0, 350, 800, 24));
+      scroller.dispatchEvent(new Event("scroll"));
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+      expect(readProgress.get("s1")?.token).toBe("previous");
+
+      headerRect.mockReturnValue(new DOMRect(0, 110, 800, 24));
+      scroller.dispatchEvent(new Event("scroll"));
+      await vi.waitFor(() => {
+        expect(readProgress.get("s1")?.token).toBe("current");
+      });
+    },
+  );
+
+  it.each([false, true])(
+    "counts expanded group messages individually until manually collapsed, newestFirst=%s",
+    async (newestFirst) => {
+      messages.messages = [1, 2].map(makeToolMessage);
+      messages.messageCount = 3;
+      messages.activeSessionUnreadOrdinal = 1;
+      messages.hasOlder = false;
+      ui.followLatest = false;
+      ui.sortNewestFirst = newestFirst;
+      setVirtualRows(1);
+      readProgress.baseline("s1", "previous", 0);
+      component = mount(MessageList, { target: document.body });
+      await tick();
+
+      const scroller = document.querySelector<HTMLElement>(".message-list-scroll")!;
+      const header = document.querySelector<HTMLElement>(".tool-group-header")!;
+      vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 100, 800, 200));
+      vi.spyOn(header, "getBoundingClientRect").mockReturnValue(new DOMRect(0, 110, 800, 24));
+      // The header is visible, but only one of the two message rows has been seen.
+      vi.spyOn(
+        document.querySelector<HTMLElement>('[data-message-ordinal="1"]')!,
+        "getBoundingClientRect",
+      ).mockReturnValue(new DOMRect(0, 140, 800, 80));
+      vi.spyOn(
+        document.querySelector<HTMLElement>('[data-message-ordinal="2"]')!,
+        "getBoundingClientRect",
+      ).mockReturnValue(new DOMRect(0, 400, 800, 80));
+      scroller.dispatchEvent(new Event("scroll"));
+      await new Promise((resolve) => window.setTimeout(resolve, 20));
+      expect(readProgress.get("s1")?.token).toBe("previous");
+
+      document.querySelector<HTMLButtonElement>(".tool-group-toggle")!.click();
+      await tick();
+      // Collapsing must recheck progress without requiring another scroll.
+      await vi.waitFor(() => {
+        expect(readProgress.get("s1")?.token).toBe("current");
+      });
+    },
+  );
 
   it("does not mark newest-first updates read while only older rows are visible", async () => {
     messages.messages = [

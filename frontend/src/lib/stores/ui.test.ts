@@ -25,6 +25,65 @@ describe("UIStore", () => {
     ui.followLatestRequest = 0;
   });
 
+  describe("toolGroupsExpanded", () => {
+    it("defaults to expanded", () => {
+      expect(ui.toolGroupsExpanded).toBe(true);
+    });
+
+    it("persists both expansion defaults", async () => {
+      const original = globalThis.localStorage;
+      const setItem = vi.fn();
+      Object.defineProperty(globalThis, "localStorage", {
+        value: { getItem: vi.fn(() => null), setItem },
+        writable: true,
+        configurable: true,
+      });
+      try {
+        // @ts-expect-error -- query string busts module cache
+        const mod = await import("./ui.svelte.js?persistToolGroupsPreference");
+        mod.ui.toolGroupsExpanded = false;
+        await tick();
+        expect(setItem).toHaveBeenCalledWith("agentsview-tool-groups-expanded", "false");
+        mod.ui.toolGroupsExpanded = true;
+        await tick();
+        expect(setItem).toHaveBeenCalledWith("agentsview-tool-groups-expanded", "true");
+      } finally {
+        Object.defineProperty(globalThis, "localStorage", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
+
+    it("loads a collapsed default and ignores malformed storage", async () => {
+      const original = globalThis.localStorage;
+      const getItem = vi.fn((key: string): string | null =>
+        key === "agentsview-tool-groups-expanded" ? "false" : null,
+      );
+      Object.defineProperty(globalThis, "localStorage", {
+        value: { getItem, setItem: vi.fn() },
+        writable: true,
+        configurable: true,
+      });
+      try {
+        // @ts-expect-error -- query string busts module cache
+        const stored = await import("./ui.svelte.js?storedToolGroupsPreference");
+        expect(stored.ui.toolGroupsExpanded).toBe(false);
+        getItem.mockReturnValue("invalid");
+        // @ts-expect-error -- query string busts module cache
+        const invalid = await import("./ui.svelte.js?invalidToolGroupsPreference");
+        expect(invalid.ui.toolGroupsExpanded).toBe(true);
+      } finally {
+        Object.defineProperty(globalThis, "localStorage", {
+          value: original,
+          writable: true,
+          configurable: true,
+        });
+      }
+    });
+  });
+
   describe("activeModal", () => {
     it("should default to null", () => {
       expect(ui.activeModal).toBeNull();
