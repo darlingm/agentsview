@@ -57,6 +57,7 @@ const {
   },
   mockRouter: {
     navigateToSession: vi.fn(),
+    buildSessionHref: vi.fn<(id: string, params?: Record<string, string>) => string>(),
   },
   mockCopyToClipboard: vi.fn(),
   mockEmbeddingsService: {
@@ -77,9 +78,13 @@ vi.mock("../../stores/search.svelte.js", () => ({
   searchStore: mockSearchStore,
 }));
 
-vi.mock("../../stores/router.svelte.js", () => ({
-  router: mockRouter,
-}));
+vi.mock("../../stores/router.svelte.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../stores/router.svelte.js")>();
+  mockRouter.buildSessionHref.mockImplementation((id, params) =>
+    actual.router.buildSessionHref(id, params),
+  );
+  return { router: mockRouter };
+});
 
 vi.mock("../../stores/messages.svelte.js", () => ({
   messages: {},
@@ -282,10 +287,14 @@ describe("CommandPalette", () => {
     const badge = await tickUntil(".item-id");
     expect(badge.textContent?.trim()).toBe("abc123de");
 
-    badge.click();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    badge.dispatchEvent(click);
     await tick();
 
     expect(mockCopyToClipboard).toHaveBeenCalledWith("codex:abc123def456");
+    expect(click.defaultPrevented).toBe(true);
+    expect(mockRouter.navigateToSession).not.toHaveBeenCalled();
+    expect(mockUi.activeModal).toBe("commandPalette");
 
     unmount(component);
   });
@@ -430,11 +439,14 @@ describe("CommandPalette", () => {
     await enterSearchQuery();
 
     const item = await tickUntil(".palette-item");
-    item.click();
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    item.dispatchEvent(click);
     await tick();
 
     expect(mockRouter.navigateToSession).toHaveBeenCalledWith("codex:search123");
     expect(mockUi.scrollToOrdinal).toHaveBeenCalledWith(7, "codex:search123");
+    expect(click.defaultPrevented).toBe(true);
+    expect(mockUi.activeModal).toBeNull();
 
     unmount(component);
   });
@@ -444,13 +456,144 @@ describe("CommandPalette", () => {
     await tick();
 
     const item = await tickUntil(".palette-item");
-    item.click();
+    expect(item.tagName).toBe("A");
+    expect(item.getAttribute("href")).toBe("/sessions/s1");
+    expect(mockRouter.buildSessionHref).toHaveBeenCalledWith("s1");
+    const click = new MouseEvent("click", { bubbles: true, cancelable: true });
+    item.dispatchEvent(click);
     await tick();
 
     expect(mockRouter.navigateToSession).toHaveBeenCalledWith("s1");
     expect(mockUi.activeModal).toBeNull();
+    expect(click.defaultPrevented).toBe(true);
 
     unmount(component);
+  });
+
+  it.each([
+    { ordinal: 7, params: { msg: "7" }, href: "/sessions/codex/search123?msg=7" },
+    { ordinal: 0, params: { msg: "0" }, href: "/sessions/codex/search123?msg=0" },
+    { ordinal: -1, params: undefined, href: "/sessions/codex/search123" },
+  ])(
+    "links ordinal $ordinal through the router's session URL builder",
+    async ({ ordinal, params, href }) => {
+      mockSearchStore.results = [makeSearchResult({ ordinal })];
+      const component = mount(CommandPalette, { target: document.body });
+      await enterSearchQuery();
+
+      const item = await tickUntil(".palette-item");
+      expect(item.tagName).toBe("A");
+      expect(item.getAttribute("href")).toBe(href);
+      expect(mockRouter.buildSessionHref).toHaveBeenCalledWith("codex:search123", params);
+
+      await unmount(component);
+    },
+  );
+
+  describe.each(["recent", "search"] as const)("%s result links", (kind) => {
+    async function mountResults() {
+      mockSearchStore.results = [
+        makeSearchResult(),
+        makeSearchResult({ session_id: "codex:second", ordinal: 8 }),
+      ];
+      const component = mount(CommandPalette, { target: document.body });
+      await tick();
+      if (kind === "search") await enterSearchQuery();
+      return component;
+    }
+
+    it.each([
+      { name: "Ctrl-click", type: "click", init: { ctrlKey: true } },
+      { name: "Cmd-click", type: "click", init: { metaKey: true } },
+      { name: "Shift-click", type: "click", init: { shiftKey: true } },
+      { name: "Alt-click", type: "click", init: { altKey: true } },
+      { name: "non-primary click", type: "click", init: { button: 1 } },
+      { name: "middle-click", type: "auxclick", init: { button: 1 } },
+      { name: "right-click", type: "contextmenu", init: { button: 2 } },
+    ])("leaves $name to the browser without closing or navigating", async ({ type, init }) => {
+      const component = await mountResults();
+      const item = await tickUntil(".palette-item");
+      const event = new MouseEvent(type, { ...init, bubbles: true, cancelable: true });
+      let preventedByPalette: boolean | undefined;
+      // Observe default handling after the component, then suppress jsdom's
+      // unimplemented native navigation without hiding component regressions.
+      document.addEventListener(
+        type,
+        (e) => {
+          preventedByPalette = e.defaultPrevented;
+          e.preventDefault();
+        },
+        { once: true },
+      );
+      item.dispatchEvent(event);
+      await tick();
+
+      expect(preventedByPalette).toBe(false);
+      expect(mockRouter.navigateToSession).not.toHaveBeenCalled();
+      expect(mockUi.scrollToOrdinal).not.toHaveBeenCalled();
+      expect(mockUi.clearScrollState).not.toHaveBeenCalled();
+      expect(mockUi.activeModal).toBe("commandPalette");
+
+      await unmount(component);
+    });
+
+    it("allows native Enter activation on a focused link", async () => {
+      const component = await mountResults();
+      const item = await tickUntil(".palette-item");
+      item.focus();
+      const enter = new KeyboardEvent("keydown", {
+        key: "Enter",
+        bubbles: true,
+        cancelable: true,
+      });
+      item.dispatchEvent(enter);
+
+      expect(enter.defaultPrevented).toBe(false);
+      expect(mockRouter.navigateToSession).not.toHaveBeenCalled();
+
+      await unmount(component);
+    });
+
+    it("preserves Space activation on a focused link", async () => {
+      const component = await mountResults();
+      const item = document.querySelectorAll<HTMLElement>(".palette-item")[1]!;
+      item.focus();
+      const space = new KeyboardEvent("keydown", {
+        key: " ",
+        bubbles: true,
+        cancelable: true,
+      });
+      item.dispatchEvent(space);
+      await tick();
+
+      expect(space.defaultPrevented).toBe(true);
+      expect(mockRouter.navigateToSession).toHaveBeenCalledOnce();
+      expect(mockRouter.navigateToSession).toHaveBeenCalledWith(
+        kind === "search" ? "codex:second" : "s2",
+      );
+      expect(mockUi.activeModal).toBeNull();
+
+      await unmount(component);
+    });
+
+    it("preserves ArrowDown and Enter selection from the search input", async () => {
+      const component = await mountResults();
+      const input = document.querySelector<HTMLInputElement>(".palette-input")!;
+      for (const key of ["ArrowDown", "Enter"]) {
+        const event = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+        input.dispatchEvent(event);
+        await tick();
+        expect(event.defaultPrevented).toBe(true);
+      }
+
+      expect(mockRouter.navigateToSession).toHaveBeenCalledOnce();
+      expect(mockRouter.navigateToSession).toHaveBeenCalledWith(
+        kind === "search" ? "codex:second" : "s2",
+      );
+      expect(mockUi.activeModal).toBeNull();
+
+      await unmount(component);
+    });
   });
 
   it("always renders localized search modes below the input", async () => {
