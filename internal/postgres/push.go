@@ -2048,6 +2048,7 @@ func sessionPushFingerprint(
 		stringValue(sess.SessionName),
 		stringValue(sess.StartedAt),
 		stringValue(sess.EndedAt),
+		stringValue(sess.ArchivedAt),
 		stringValue(sess.DeletedAt),
 		stringValue(sess.DeletionCause),
 		strconv.Itoa(sess.MessageCount),
@@ -2234,6 +2235,10 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 	if err != nil {
 		return fmt.Errorf("parsing session %s deleted_at: %w", sess.ID, err)
 	}
+	archivedAt, err := optionalSQLiteTimestamp(stringValue(sess.ArchivedAt))
+	if err != nil {
+		return fmt.Errorf("parsing session %s archived_at: %w", sess.ID, err)
+	}
 	isAutomated := sess.IsAutomated
 	pushedMachine := pushedSessionMachine(sess, options.Machine)
 	var existingMachine sql.NullString
@@ -2297,7 +2302,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 			transcript_fidelity, transcript_revision,
 			agent_label, entrypoint, session_kind,
 			source_archive_id, source_database_generation, file_path,
-			project_assigned, prompt_evidence_discarded, updated_at
+			project_assigned, prompt_evidence_discarded, archived_at, updated_at
 			)
 			SELECT
 				$1, $2, $3, $4, $5, $6, $7, $8,
@@ -2315,11 +2320,12 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 				$50, $51,
 				$52, $53, $54, $55, $56, $57, $58, $59, $60, $61,
 				$62, $63, $64, $65, $66, $67, $68,
-				$70, NOW()
+				$70, $71, NOW()
 			WHERE NOT EXISTS (
 				SELECT 1 FROM excluded_sessions WHERE id = $1
 			)
 			ON CONFLICT (id) DO UPDATE SET
+			archived_at = EXCLUDED.archived_at,
 			machine = EXCLUDED.machine,
 			owner_marker = EXCLUDED.owner_marker,
 			project = EXCLUDED.project,
@@ -2445,6 +2451,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 			OR sessions.created_at IS DISTINCT FROM EXCLUDED.created_at
 			OR sessions.started_at IS DISTINCT FROM EXCLUDED.started_at
 			OR sessions.ended_at IS DISTINCT FROM EXCLUDED.ended_at
+			OR sessions.archived_at IS DISTINCT FROM EXCLUDED.archived_at
 			OR sessions.source_deleted_at IS DISTINCT FROM EXCLUDED.deleted_at
 			OR sessions.deletion_cause IS DISTINCT FROM EXCLUDED.deletion_cause
 			OR sessions.message_count IS DISTINCT FROM EXCLUDED.message_count
@@ -2545,6 +2552,7 @@ func writePGSession(ctx context.Context, tx *sql.Tx, sess db.Session, markerID s
 		sess.ProjectAssigned,
 		string(legacyMarkerMachinesJSON),
 		options.UsageOnly,
+		archivedAt,
 	)
 	if err != nil {
 		return err

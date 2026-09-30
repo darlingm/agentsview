@@ -452,6 +452,17 @@ components:
         - matched_sessions
         - updated_sessions
       type: object
+    ArchiveStateResponse:
+      additionalProperties: false
+      properties:
+        sessions:
+          description: Only sessions whose archive state changed
+          items:
+            $ref: "#/components/schemas/DbSessionArchiveState"
+          type: array
+      required:
+        - sessions
+      type: object
     ArtifactExchangeRequest:
       additionalProperties: false
       properties:
@@ -500,6 +511,23 @@ components:
         - received_artifacts
         - published_artifacts
         - more
+      type: object
+    BatchArchiveInputBody:
+      additionalProperties: false
+      properties:
+        archived:
+          description: True to archive; false to unarchive
+          type: boolean
+        session_ids:
+          description: Session IDs whose archive markers should change
+          items:
+            type: string
+          maxItems: 1000
+          minItems: 1
+          type: array
+      required:
+        - session_ids
+        - archived
       type: object
     BatchDeleteInputBody:
       additionalProperties: false
@@ -2423,6 +2451,8 @@ components:
           type: string
         agent_label:
           type: string
+        archived_at:
+          type: string
         compaction_count:
           format: int64
           type: integer
@@ -2631,6 +2661,19 @@ components:
         - interval_seconds
         - total_messages
       type: object
+    DbSessionArchiveState:
+      additionalProperties: false
+      properties:
+        archived_at:
+          type:
+            - string
+            - "null"
+        id:
+          type: string
+      required:
+        - id
+        - archived_at
+      type: object
     DbSessionPage:
       additionalProperties: false
       properties:
@@ -2819,6 +2862,8 @@ components:
         agent:
           type: string
         agent_label:
+          type: string
+        archived_at:
           type: string
         created_at:
           type: string
@@ -6355,6 +6400,8 @@ components:
         agent:
           type: string
         agent_label:
+          type: string
+        archived_at:
           type: string
         compaction_count:
           format: int64
@@ -17438,6 +17485,91 @@ paths:
       summary: List sessions
       tags:
         - Sessions
+  /api/v1/sessions/batch-archive:
+    post:
+      operationId: post-api-v1-sessions-batch-archive
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchArchiveInputBody"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveStateResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Service Unavailable
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Gateway Timeout
+      summary: Set session archive states
+      tags:
+        - Sessions
   /api/v1/sessions/batch-delete:
     post:
       operationId: post-api-v1-sessions-batch-delete
@@ -17727,6 +17859,17 @@ paths:
           schema:
             description: Default sort direction for keys in order_by that carry no explicit :asc/:desc suffix
             type: boolean
+        - description: List-only archive filter; omitted includes archived sessions
+          explode: false
+          in: query
+          name: archive_state
+          schema:
+            description: List-only archive filter; omitted includes archived sessions
+            enum:
+              - all
+              - unarchived
+              - archived
+            type: string
       responses:
         "200":
           content:
@@ -18261,6 +18404,179 @@ paths:
                 $ref: "#/components/schemas/ApiErrorResponse"
           description: Gateway Timeout
       summary: Get session activity
+      tags:
+        - Sessions
+  /api/v1/sessions/{id}/archive:
+    delete:
+      operationId: delete-api-v1-sessions-id-archive
+      parameters:
+        - description: Session ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Session ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveStateResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Service Unavailable
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Gateway Timeout
+      summary: Unarchive session
+      tags:
+        - Sessions
+    put:
+      operationId: put-api-v1-sessions-id-archive
+      parameters:
+        - description: Session ID
+          in: path
+          name: id
+          required: true
+          schema:
+            description: Session ID
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArchiveStateResponse"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Request
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unauthorized
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Forbidden
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Found
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Conflict
+        "422":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Unprocessable Entity
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Internal Server Error
+        "501":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Not Implemented
+        "502":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Bad Gateway
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Service Unavailable
+        "504":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiErrorResponse"
+          description: Gateway Timeout
+      summary: Archive session
       tags:
         - Sessions
   /api/v1/sessions/{id}/children:

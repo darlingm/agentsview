@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- to suppress benign incremental-vs-full skew; deliberately not
     -- mirrored to PG/DuckDB.
     last_write_incremental INTEGER NOT NULL DEFAULT 0,
+    archived_at TEXT,
     deleted_at  TEXT,
     -- Retained for compatibility with older archives and mirrors. New source
     -- availability state is stored independently in source_missing_at.

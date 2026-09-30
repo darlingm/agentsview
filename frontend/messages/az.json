@@ -845,7 +845,7 @@
   "settings_search_empty": "Uyğun gələn parametr yoxdur",
   "settings_search_clear": "Axtarışı təmizlə",
   "settings_search_result": "{category} göstərilir",
-  "settings_search_keywords_appearance": "Tema kontrast düzülüş mətn şrift bloklar miqyas",
+  "settings_search_keywords_appearance": "Tema kontrast düzülüş mətn şrift bloklar miqyas Arxivlə Arxivlənib",
   "settings_search_keywords_language": "Dil yerli parametrlər tərcümə",
   "settings_search_keywords_date_ranges": "Tarix aralıq əlaqəli səhifələr",
   "settings_search_keywords_terminal": "Terminal davam et işə sal icra faylı arqumentlər mübadilə buferi",
@@ -2386,5 +2386,16 @@
   "go_to_session_ambiguous": "Bu ID-yə və ya UUID-yə bir neçə sessiya uyğun gəlir. İstədiyiniz sessiyanı mövcud keçiddən açın.",
   "go_to_session_capped": "Bu ID-yə və ya UUID-yə həddindən çox sessiya uyğun gəlir. İstədiyiniz sessiyanı mövcud keçiddən açın.",
   "go_to_session_failed": "Həmin sessiyanı tapmaq mümkün olmadı. Yenidən cəhd edin.",
-  "shortcuts_go_to_session": "Tapma pəncərəsi bağlı olduqda sessiyaya keç"
+  "shortcuts_go_to_session": "Tapma pəncərəsi bağlı olduqda sessiyaya keç",
+  "session_archive_visibility": "Sessiya siyahısında arxivlənmiş sessiyalar",
+  "session_archive_hide": "Gizlət",
+  "session_archive_dim": "Solğun göstər",
+  "session_archive_visibility_help": "Adi baxış zamanı görünüşü seçin. Axtarış və analitika dəyişmir.",
+  "session_archive_only": "Yalnız arxivlənmişləri göstər",
+  "session_archive_error": "Arxiv vəziyyətini dəyişmək mümkün olmadı. Yenidən cəhd edin.",
+  "session_archive_archive": "Arxivlə",
+  "session_archive_unarchive": "Arxivdən çıxar",
+  "session_archive_archived_label": "Arxivlənib",
+  "session_archive_archived_count": "Arxivlənib: {countLabel}",
+  "session_archive_unarchived_count": "Arxivdən çıxarılıb: {countLabel}"
 }

@@ -7,6 +7,7 @@ import type {
   DbAgentInfo as AgentInfo,
   DbSidebarSessionIndexRow as SidebarSessionIndexRow,
 } from "../api/generated/index.js";
+import { sessionArchive } from "./sessionArchive.svelte.js";
 import { sync } from "./sync.svelte.js";
 import { events } from "./events.svelte.js";
 import { starred } from "./starred.svelte.js";
@@ -49,6 +50,7 @@ export interface SessionGroupInput {
   ended_at: string | null;
   created_at: string;
   termination_status?: string | null;
+  archived_at?: string | null;
   message_count: number;
   user_message_count?: number;
   transcript_revision?: string;
@@ -277,6 +279,9 @@ class SessionsStore {
   machineLabels: Record<string, string> = $state({});
   private machineAliases = new Map<string, string>();
   activeSessionId: string | null = $state(null);
+  archiveBusy = $state(false);
+  archiveUndo: { ids: string[]; archived: boolean; timer: ReturnType<typeof setTimeout> } | null =
+    $state(null);
   // Lets the message pane explain a 404 instead of rendering blank.
   activeSessionNotFound: boolean = $state(false);
   // Bumped when a not-found session recovers; per-session loaders
@@ -342,7 +347,9 @@ class SessionsStore {
   }
 
   get groupedSessions(): SessionGroup[] {
-    return buildSessionGroups(this.sessions);
+    return buildSessionGroups(
+      this.sessions.filter((session) => sessionArchive.includes(session.archived_at)),
+    );
   }
 
   private get apiParams(): SidebarIndexParams {
@@ -350,6 +357,7 @@ class SessionsStore {
     // Don't exclude "unknown" when explicitly viewing it.
     const exclude = f.hideUnknownProject && f.project !== "unknown" ? "unknown" : undefined;
     return {
+      archive_state: sessionArchive.filter,
       project: f.project || undefined,
       exclude_project: exclude,
       machine: f.machine || undefined,
@@ -1307,6 +1315,66 @@ class SessionsStore {
     this.selectedIds = new Set();
   }
 
+  async setArchived(ids: string[], archived: boolean, rememberUndo = true) {
+    if (ids.length === 0 || this.archiveBusy) return;
+    this.archiveBusy = true;
+    const changedIds: string[] = [];
+    try {
+      // Match the API's bound. Each successful chunk remains undoable even if
+      // a later chunk fails; don't pretend a partially completed batch vanished.
+      for (let i = 0; i < ids.length; i += 1000) {
+        const result = await SessionsService.postApiV1SessionsBatchArchive({
+          session_ids: ids.slice(i, i + 1000),
+          archived,
+        });
+        const changed = new Map(result.sessions.map((state) => [state.id, state.archived_at]));
+        changedIds.push(...changed.keys());
+        this.sessions = this.sessions.map((session) =>
+          changed.has(session.id)
+            ? { ...session, archived_at: changed.get(session.id) ?? undefined }
+            : session,
+        );
+        for (const [id, session] of this.childSessions) {
+          if (changed.has(id))
+            this.childSessions.set(id, { ...session, archived_at: changed.get(id) ?? undefined });
+        }
+      }
+    } finally {
+      if (changedIds.length > 0) {
+        if (rememberUndo) {
+          this.clearArchiveUndo();
+          const undo = {
+            ids: changedIds,
+            archived,
+            timer: setTimeout(() => this.clearArchiveUndo(), RECENTLY_DELETED_TTL_MS),
+          };
+          this.archiveUndo = undo;
+        }
+        // Force a fresh sidebar signature; leave the open transcript selected,
+        // even when its archived row no longer belongs in the sidebar.
+        try {
+          await this.load({ force: true });
+        } finally {
+          this.archiveBusy = false;
+        }
+      } else {
+        this.archiveBusy = false;
+      }
+    }
+  }
+
+  clearArchiveUndo() {
+    if (this.archiveUndo) clearTimeout(this.archiveUndo.timer);
+    this.archiveUndo = null;
+  }
+
+  async undoArchive() {
+    const undo = this.archiveUndo;
+    if (!undo || this.archiveBusy) return;
+    await this.setArchived(undo.ids, !undo.archived, false);
+    if (this.archiveUndo === undo) this.clearArchiveUndo();
+  }
+
   async deleteSession(id: string) {
     await SessionsService.deleteApiV1SessionsById({ id });
     if (this.activeSessionId === id) {
@@ -1610,6 +1678,7 @@ function sidebarIndexRowToSession(row: SidebarSessionIndexRow, existing?: Sessio
     parent_session_id: row.parent_session_id ?? undefined,
     parent_session_ids: row.parent_session_ids,
     relationship_type: row.relationship_type ?? undefined,
+    archived_at: row.archived_at ?? undefined,
     termination_status: row.termination_status ?? undefined,
     total_output_tokens: 0,
     peak_context_tokens: 0,
@@ -1639,6 +1708,7 @@ function sidebarIndexRowToSession(row: SidebarSessionIndexRow, existing?: Sessio
     parent_session_id: skinny.parent_session_id,
     parent_session_ids: skinny.parent_session_ids,
     relationship_type: skinny.relationship_type,
+    archived_at: skinny.archived_at,
     termination_status: skinny.termination_status,
     transcript_revision: skinny.transcript_revision,
     is_automated: skinny.is_automated,
@@ -1666,6 +1736,7 @@ function minString(a: string | null, b: string | null): string | null {
  * fields all have safe fallbacks via `??`. */
 export interface SessionStatusInput {
   termination_status?: string | null;
+  archived_at?: string | null;
   ended_at?: string | null;
   started_at?: string | null;
   created_at?: string;

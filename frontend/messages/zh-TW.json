@@ -816,7 +816,7 @@
   "settings_search_empty": "沒有相符的設定",
   "settings_search_clear": "清除搜尋",
   "settings_search_result": "顯示：{category}",
-  "settings_search_keywords_appearance": "主題 對比度 版面配置 文字 字體 區塊 theme contrast layout text font blocks 縮放 zoom",
+  "settings_search_keywords_appearance": "主題 對比度 版面配置 文字 字體 區塊 theme contrast layout text font blocks 縮放 zoom 封存 已封存",
   "settings_search_keywords_language": "語言 地區設定 翻譯 language locale translation",
   "settings_search_keywords_date_ranges": "日期 範圍 關聯 頁面 date range linked pages",
   "settings_search_keywords_terminal": "終端機 繼續 啟動 執行檔 參數 剪貼簿 terminal resume launch binary arguments clipboard",
@@ -2301,5 +2301,16 @@
   "go_to_session_ambiguous": "有多個對話符合此 ID 或 UUID。請透過現有連結開啟目標對話。",
   "go_to_session_capped": "符合此 ID 或 UUID 的對話太多。請透過現有連結開啟目標對話。",
   "go_to_session_failed": "無法查詢此對話。請再試一次。",
-  "shortcuts_go_to_session": "關閉查找後跳轉至對話"
+  "shortcuts_go_to_session": "關閉查找後跳轉至對話",
+  "session_archive_visibility": "工作階段清單中的已封存工作階段",
+  "session_archive_hide": "隱藏",
+  "session_archive_dim": "淡化顯示",
+  "session_archive_visibility_help": "選擇正常瀏覽時的顯示方式。搜尋與分析不受影響。",
+  "session_archive_only": "僅顯示已封存工作階段",
+  "session_archive_error": "無法變更封存狀態。請重試。",
+  "session_archive_archive": "封存",
+  "session_archive_unarchive": "取消封存",
+  "session_archive_archived_label": "已封存",
+  "session_archive_archived_count": "已封存：{countLabel}",
+  "session_archive_unarchived_count": "已取消封存：{countLabel}"
 }

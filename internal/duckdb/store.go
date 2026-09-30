@@ -310,7 +310,7 @@ const duckSessionCols = `id, project, project_assigned, machine, agent,
 	cwd, git_branch, source_session_id, source_version, transcript_fidelity,
 	parser_malformed_lines, is_truncated,
 	secret_leak_count, secrets_rules_version,
-	deleted_at, deletion_cause, termination_status, transcript_revision`
+	archived_at, deleted_at, deletion_cause, termination_status, transcript_revision`
 
 func scanSession(rs interface{ Scan(...any) error }) (db.Session, error) {
 	return scanSessionWithSource(rs, false)
@@ -321,7 +321,7 @@ func scanSessionWithSource(
 ) (db.Session, error) {
 	var s db.Session
 	var createdAt any
-	var startedAt, endedAt, deletedAt any
+	var startedAt, endedAt, archivedAt, deletedAt any
 	targets := []any{
 		&s.ID, &s.Project, &s.ProjectAssigned, &s.Machine, &s.Agent,
 		&s.AgentLabel, &s.Entrypoint, &s.SessionKind,
@@ -350,7 +350,7 @@ func scanSessionWithSource(
 		&s.SourceSessionID, &s.SourceVersion, &s.TranscriptFidelity,
 		&s.ParserMalformedLines, &s.IsTruncated,
 		&s.SecretLeakCount, &s.SecretsRulesVersion,
-		&deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision,
+		&archivedAt, &deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision,
 	}
 	if includeSource {
 		targets = append(targets, &s.FilePath)
@@ -365,6 +365,9 @@ func scanSessionWithSource(
 	}
 	if v := formatDBTime(endedAt); v != "" {
 		s.EndedAt = &v
+	}
+	if v := formatDBTime(archivedAt); v != "" {
+		s.ArchivedAt = &v
 	}
 	if v := formatDBTime(deletedAt); v != "" {
 		s.DeletedAt = &v
@@ -609,9 +612,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 	rootFilter := f
 	rootFilter.IncludeChildren = false
 	rootWhere, rootArgs := db.BuildSessionBaseFilterSQL(rootFilter, dialect)
-	canonicalRootWhere := db.BuildCanonicalRootWhere(
-		dialect, "sessions", f.IncludeOrphans,
-	)
+	canonicalRootWhere := db.BuildSidebarRootWhere(f, dialect, "sessions")
 	var total int
 	if err := s.queryRowContext(
 		ctx,
@@ -638,6 +639,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 			started_at,
 			ended_at,
 			created_at,
+			archived_at,
 			termination_status,
 			message_count,
 			user_message_count,
@@ -663,7 +665,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 	}
 	for rows.Next() {
 		var row db.SidebarSessionIndexRow
-		var startedAt, endedAt, createdAt any
+		var startedAt, endedAt, createdAt, sidebarArchivedAt any
 		if err := rows.Scan(
 			&row.ID,
 			&row.ParentSessionID,
@@ -679,6 +681,7 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 			&startedAt,
 			&endedAt,
 			&createdAt,
+			&sidebarArchivedAt,
 			&row.TerminationStatus,
 			&row.MessageCount,
 			&row.UserMessageCount,
@@ -691,6 +694,9 @@ func (s *Store) GetSidebarSessionIndex(ctx context.Context, f db.SessionFilter) 
 					"scanning duckdb sidebar session index: %w",
 					err,
 				)
+		}
+		if v := formatDBTime(sidebarArchivedAt); v != "" {
+			row.ArchivedAt = &v
 		}
 		if v := formatDBTime(startedAt); v != "" {
 			row.StartedAt = &v

@@ -1026,6 +1026,45 @@ right-click a session to open a context menu and select **Rename**. Press Enter
 to save or Escape to cancel. The custom name persists as a `display_name` in the
 database and overrides the default first-message title.
 
+### Archived sessions
+
+On newer `main` builds, archive a session to reduce its prominence without
+removing its history. Select **Archive** from its right-click menu or the
+archive button in the session toolbar. Use the sidebar's multi-select mode to
+archive several sessions at once. Archiving applies to the selected sessions;
+it does not automatically archive their child sessions.
+
+Archived sessions remain openable, searchable, exportable, and included in
+analytics and usage totals. Sync continues updating them. Archiving does not
+move or delete the original agent files. Choose **Unarchive** to reverse it,
+or use the brief **Undo** notification after an archive or unarchive action.
+
+**Settings → Appearance → Archived sessions in the session list** controls
+normal browsing:
+
+- **Hide** (default) shows only unarchived sessions.
+- **Show dimmed** shows both, with archived text visually subdued. Hover,
+  keyboard focus, or selecting a session restores its normal emphasis.
+  The dimming also applies in high-contrast mode.
+
+Archived rows show a non-interactive archive icon beside their date and
+count. Their names stay aligned with other sessions. Favorites remain separate:
+an archived session can still be starred, and the star button never archives it.
+
+This preference is saved in your browser. In the session-list filter menu,
+**Show only archived** temporarily shows just archived sessions, regardless of
+that preference. Uncheck it, or clear the list filters, to return to normal
+browsing. The archived-only filter is not saved across reloads. Neither control
+affects search or analytics.
+
+When a parent's archive state differs from a child's, the matching child can
+appear on its own in the filtered list. Opening a session from search or a
+saved link still works when the normal sidebar hides it.
+
+Archive actions are available on the writable SQLite server. Replica and mirror
+dashboards display archive markers pushed from SQLite but do not change them.
+Trash remains separate: archived sessions are never removed by **Empty trash**.
+
 ### Trash
 
 Press `Del` (or `Backspace`) with a session selected, or right-click and select
@@ -1228,7 +1267,7 @@ Press `?` to see all shortcuts in a modal overlay.
 | `o`       | Toggle sort order                 |
 | `l`       | Cycle message layout              |
 | `s`       | Star / unstar current session     |
-| `Del`     | Delete / archive selected session |
+| `Del`     | Move selected session to trash    |
 | `r`       | Trigger sync                      |
 | `e`       | Export session                    |
 | `p`       | Publish to Gist                   |
@@ -1249,7 +1288,7 @@ organized into sections:
 | Section            | What You Can Configure                                                                                   |
 | ------------------ | -------------------------------------------------------------------------------------------------------- |
 | Language           | Interface language (Azerbaijani, English, French, Japanese, Korean, Spanish, Simplified Chinese, or Traditional Chinese)       |
-| Appearance         | Theme (light/dark), high-contrast mode, chart colors, message layout, zoom, block visibility             |
+| Appearance         | Theme (light/dark), high-contrast mode, chart colors, message layout, zoom, block visibility, archived-session display |
 | Date ranges        | Browser-local checkbox for linking date selections across Sessions, Usage, Activity, Trends, and Quality |
 | Session Providers  | Enable session providers, inspect their session directories, and add alternate agent homes               |
 | Archive content    | Choose whether future imports keep, drop, or offload tool-result images                                  |

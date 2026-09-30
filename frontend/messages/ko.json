@@ -818,7 +818,7 @@
   "settings_search_empty": "일치하는 설정 없음",
   "settings_search_clear": "검색 지우기",
   "settings_search_result": "{category} 표시 중",
-  "settings_search_keywords_appearance": "테마 대비 레이아웃 텍스트 글꼴 블록 theme contrast layout text font blocks 확대 축소 zoom",
+  "settings_search_keywords_appearance": "테마 대비 레이아웃 텍스트 글꼴 블록 theme contrast layout text font blocks 확대 축소 zoom 보관 보관됨",
   "settings_search_keywords_language": "언어 로캘 번역 language locale translation",
   "settings_search_keywords_date_ranges": "날짜 범위 연결 페이지 date range linked pages",
   "settings_search_keywords_terminal": "터미널 재개 실행 바이너리 인수 클립보드 terminal resume launch binary arguments clipboard",
@@ -2301,5 +2301,16 @@
   "go_to_session_ambiguous": "여러 세션 ID 또는 UUID가 일치합니다. 기존 링크에서 원하는 세션을 여세요.",
   "go_to_session_capped": "일치하는 세션 ID 또는 UUID가 너무 많습니다. 기존 링크에서 원하는 세션을 여세요.",
   "go_to_session_failed": "세션을 조회하지 못했습니다. 다시 시도하세요.",
-  "shortcuts_go_to_session": "찾기를 닫았을 때 세션으로 이동"
+  "shortcuts_go_to_session": "찾기를 닫았을 때 세션으로 이동",
+  "session_archive_visibility": "세션 목록의 보관된 세션",
+  "session_archive_hide": "숨기기",
+  "session_archive_dim": "흐리게 표시",
+  "session_archive_visibility_help": "일반 탐색 시 표시 방식을 선택합니다. 검색 및 분석에는 영향을 주지 않습니다.",
+  "session_archive_only": "보관된 세션만 표시",
+  "session_archive_error": "보관 상태를 변경하지 못했습니다. 다시 시도하세요.",
+  "session_archive_archive": "보관",
+  "session_archive_unarchive": "보관 해제",
+  "session_archive_archived_label": "보관됨",
+  "session_archive_archived_count": "보관됨: {countLabel}",
+  "session_archive_unarchived_count": "보관 해제됨: {countLabel}"
 }

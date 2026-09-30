@@ -924,31 +924,49 @@
 
 {/if}
 
-{#if sessions.recentlyDeleted.length > 0}
-  <!-- kit-ui-check-ignore: undo toast carries an inline restore action; kit-ui FlashBanner only supports text+dismiss today, so replacing this would change the delete/undo workflow. -->
-  <div class="undo-toast">
-    <span>{m.app_undo_session_deleted()}</span>
-    <button
-      class="undo-btn"
-      onclick={async (e) => {
-        const btn = e.currentTarget;
-        if (btn.disabled) return;
-        const last = sessions.recentlyDeleted[sessions.recentlyDeleted.length - 1];
-        if (!last) return;
-        btn.disabled = true;
-        try {
-          await sessions.restoreRecentlyDeleted(last);
-        } catch {
-          // restore failed — toast will remain
-        } finally {
-          btn.disabled = false;
-        }
-      }}
-    >
-      {m.app_undo_undo()}
-    </button>
-  </div>
-{/if}
+<div class="undo-toasts">
+  {#if sessions.recentlyDeleted.length > 0}
+    <!-- kit-ui-check-ignore: undo toast carries an inline restore action; kit-ui FlashBanner only supports text+dismiss today, so replacing this would change the delete/undo workflow. -->
+    <div class="undo-toast">
+      <span>{m.app_undo_session_deleted()}</span>
+      <button
+        class="undo-btn"
+        onclick={async (e) => {
+          const btn = e.currentTarget;
+          if (btn.disabled) return;
+          const last = sessions.recentlyDeleted[sessions.recentlyDeleted.length - 1];
+          if (!last) return;
+          btn.disabled = true;
+          try {
+            await sessions.restoreRecentlyDeleted(last);
+          } catch {
+            // restore failed — toast will remain
+          } finally {
+            btn.disabled = false;
+          }
+        }}
+      >
+        {m.app_undo_undo()}
+      </button>
+    </div>
+  {/if}
+  {#if sessions.archiveUndo}
+    <!-- kit-ui-check-ignore: archive undo uses the existing inline-action toast; FlashBanner does not support an Undo action. -->
+    <div class="undo-toast" role="status">
+      <span>{sessions.archiveUndo.archived
+        ? m.session_archive_archived_count({ countLabel: new Intl.NumberFormat().format(sessions.archiveUndo.ids.length) })
+        : m.session_archive_unarchived_count({ countLabel: new Intl.NumberFormat().format(sessions.archiveUndo.ids.length) })}</span>
+      <button
+        class="undo-btn"
+        disabled={sessions.archiveBusy}
+        onclick={async () => {
+          try { await sessions.undoArchive(); }
+          catch { showFlash(m.session_archive_error(), { tone: "danger" }); }
+        }}
+      >{m.app_undo_undo()}</button>
+    </div>
+  {/if}
+</div>
 
 <style>
   .page-scroll {
@@ -968,11 +986,19 @@
   }
 
   /* kit-ui-check-ignore: undo toast carries an inline restore action; kit-ui FlashBanner only supports text+dismiss today, so replacing this would change the delete/undo workflow. */
-  .undo-toast {
+  .undo-toasts {
     position: fixed;
     bottom: 40px;
     left: 50%;
     transform: translateX(-50%);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    z-index: var(--z-overlay);
+  }
+
+  /* kit-ui-check-ignore: shared styling for the existing inline-action undo toast, which FlashBanner cannot represent. */
+  .undo-toast {
     display: flex;
     align-items: center;
     gap: 12px;
@@ -990,11 +1016,11 @@
   @keyframes slide-up {
     from {
       opacity: 0;
-      transform: translateX(-50%) translateY(10px);
+      transform: translateY(10px);
     }
     to {
       opacity: 1;
-      transform: translateX(-50%) translateY(0);
+      transform: translateY(0);
     }
   }
 

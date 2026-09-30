@@ -843,7 +843,7 @@
   "settings_search_empty": "No matching settings",
   "settings_search_clear": "Clear search",
   "settings_search_result": "Showing {category}",
-  "settings_search_keywords_appearance": "theme contrast layout text font blocks zoom",
+  "settings_search_keywords_appearance": "theme contrast layout text font blocks zoom Archive Archived",
   "settings_search_keywords_language": "language locale translation",
   "settings_search_keywords_date_ranges": "date range linked pages",
   "settings_search_keywords_terminal": "terminal resume launch binary arguments clipboard",
@@ -2384,5 +2384,16 @@
   "go_to_session_ambiguous": "Multiple sessions match that ID or UUID. Open the desired session from an existing link.",
   "go_to_session_capped": "Too many sessions match that ID or UUID. Open the desired session from an existing link.",
   "go_to_session_failed": "Could not look up that session. Try again.",
-  "shortcuts_go_to_session": "Go to session when find is closed"
+  "shortcuts_go_to_session": "Go to session when find is closed",
+  "session_archive_visibility": "Archived sessions in the session list",
+  "session_archive_hide": "Hide",
+  "session_archive_dim": "Show dimmed",
+  "session_archive_visibility_help": "Choose their appearance during normal browsing. Search and analytics are unchanged.",
+  "session_archive_only": "Show only archived",
+  "session_archive_error": "Could not change archive state. Try again.",
+  "session_archive_archive": "Archive",
+  "session_archive_unarchive": "Unarchive",
+  "session_archive_archived_label": "Archived",
+  "session_archive_archived_count": "Archived: {countLabel}",
+  "session_archive_unarchived_count": "Unarchived: {countLabel}"
 }

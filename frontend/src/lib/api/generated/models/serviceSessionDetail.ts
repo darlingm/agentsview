@@ -7,6 +7,7 @@ import type { ServiceSessionDetailHealthPenalties } from "./serviceSessionDetail
 export interface ServiceSessionDetail {
   agent: string;
   agent_label?: string;
+  archived_at?: string;
   compaction_count: number;
   consecutive_failure_max: number;
   context_pressure_max?: number;

@@ -49,6 +49,13 @@ func TestRawContentRevisionRetainsHiddenSemanticFields(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, digest, got)
 	})
+	t.Run("user-owned archive state", func(t *testing.T) {
+		p := clone()
+		p.Session.ArchivedAt = new("2026-09-01T12:00:00Z")
+		got, err := rawContentRevision(p)
+		require.NoError(t, err)
+		assert.Equal(t, digest, got)
+	})
 	t.Run("hidden provider title", func(t *testing.T) {
 		p := clone()
 		p.Session.SessionName = new("changed")

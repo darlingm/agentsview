@@ -1139,8 +1139,8 @@ func (d *DB) CopyExcludedSessionsFrom(
 
 // CopySessionMetadataFrom merges user-managed data from the
 // source DB into sessions that were re-synced into this DB.
-// This preserves display_name, deleted_at, starred_sessions, pinned_messages,
-// archive metadata, project identity observations, worktree project mappings,
+// This preserves display_name, archived_at, deleted_at, starred_sessions,
+// pinned_messages, archive metadata, project identity observations, worktree mappings,
 // and explicit session project assignments across full DB rebuilds. Immutable
 // project snapshots are restored only from source versions that recorded
 // parser-source labels reliably.
@@ -1182,6 +1182,13 @@ func (d *DB) CopySessionMetadataFrom(
 	// values, so agent-owned and cleared rows must keep the fresh value.
 	// Probe columns first so older source DBs don't abort.
 	hasDisplayName := oldDBHasColumn(ctx, tx, "sessions", "display_name")
+	if oldDBHasColumn(ctx, tx, "sessions", "archived_at") {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE main.sessions SET archived_at = old_s.archived_at
+			FROM old_db.sessions old_s WHERE main.sessions.id = old_s.id`); err != nil {
+			return fmt.Errorf("copying archive state: %w", err)
+		}
+	}
 	hasDeletedAt := oldDBHasColumn(ctx, tx, "sessions", "deleted_at")
 	hasDeletionCause := oldDBHasColumn(ctx, tx, "sessions", "deletion_cause")
 
@@ -1816,6 +1823,9 @@ func orphanSessionCols(ctx context.Context, tx *sql.Tx) string {
 		if oldDBHasColumn(ctx, tx, "sessions", c) {
 			cols = append(cols, c)
 		}
+	}
+	if oldDBHasColumn(ctx, tx, "sessions", "archived_at") {
+		cols = append(cols, "archived_at")
 	}
 	if oldDBHasColumn(ctx, tx, "sessions", "deleted_at") {
 		cols = append(cols, "deleted_at")
