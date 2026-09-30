@@ -1,0 +1,8 @@
+{"type":"session_meta","timestamp":"2026-09-30T12:00:00Z","payload":{"cwd":"/demo/task-list","id":"11111111-1111-4111-8111-111111111111","originator":"user","source":"cli"}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:01Z","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"Please review the task list."}]}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:02Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"I will review the task list."}]}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:03Z","payload":{"type":"function_call","call_id":"demo-call-1","name":"shell_command","arguments":"{\"command\": \"cat tasks.txt\"}"}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:04Z","payload":{"type":"function_call_output","call_id":"demo-call-1","output":"Review docs\nUpdate example"}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:05Z","payload":{"type":"function_call","call_id":"demo-call-2","name":"shell_command","arguments":"{\"command\": \"wc -l tasks.txt\"}"}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:06Z","payload":{"type":"function_call_output","call_id":"demo-call-2","output":"2 tasks.txt"}}
+{"type":"response_item","timestamp":"2026-09-30T12:00:07Z","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"Both tasks are ready for review."}]}}
