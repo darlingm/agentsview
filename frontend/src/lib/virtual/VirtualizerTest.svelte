@@ -15,7 +15,7 @@
   // svelte-ignore state_referenced_locally
   let currentOptions = $state(options);
 
-  $effect(() => {
+  $effect.pre(() => {
     currentOptions = options;
   });
 
