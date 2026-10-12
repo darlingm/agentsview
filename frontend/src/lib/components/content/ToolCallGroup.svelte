@@ -1,4 +1,8 @@
 <script lang="ts">
+  import type { ToolGroupDisclosure } from "./tool-group-disclosure.js";
+  import { SvelteMap } from "svelte/reactivity";
+  import { inSessionSearch } from "../../stores/inSessionSearch.svelte.js";
+  import { searchCollapsed } from "../../search/component-state.js";
   import type { DbMessage as Message } from "../../api/generated/index.js";
   import type { DbCallTiming as CallTiming, DbTurnTiming as TurnTiming } from "../../api/generated/index.js";
   import { formatTimestamp } from "../../utils/format.js";
@@ -15,19 +19,59 @@
   import ParallelGroup from "./ParallelGroup.svelte";
   import { CopyButton } from "@kenn-io/kit-ui";
   import { displayToolName } from "../../utils/toolDisplay.js";
-  import { SettingsIcon } from "../../icons.js";
+  import { ChevronRightIcon, SettingsIcon } from "../../icons.js";
   import { m } from "../../i18n/index.js";
 
   interface Props {
+    disclosures?: SvelteMap<string, ToolGroupDisclosure>;
     messages: Message[];
     timestamp: string;
     searchable?: boolean;
+    onToggle?: () => void;
     sortNewestFirst?: boolean;
     divider?: { ordinal: number; label: string };
   }
 
-  let { messages, timestamp, searchable = false, sortNewestFirst = false, divider }: Props = $props();
+  let {
+    messages,
+    timestamp,
+    searchable = false,
+    onToggle,
+    sortNewestFirst = false,
+    divider,
+    disclosures = new SvelteMap<string, ToolGroupDisclosure>(),
+  }: Props = $props();
   let copied = $state(false);
+  const bodyId = $props.id();
+  // Older pages can extend a group backwards, changing its first ordinal.
+  // Associate the choice with its messages so either end can grow.
+  let disclosure = $derived.by(() => {
+    for (const message of messages) {
+      const choice = disclosures.get(`${message.session_id}:${message.ordinal}`);
+      if (choice) return choice;
+    }
+    return undefined;
+  });
+  let current = $derived(searchable && messages.some(
+    (message) => message.ordinal === inSessionSearch.currentOrdinal,
+  ));
+  let collapsed = $derived(searchCollapsed(
+    disclosure?.collapsed ?? !ui.toolGroupsExpanded,
+    current,
+    inSessionSearch.navigationRevision,
+    disclosure?.overrideSeq ?? -1,
+  ));
+
+  function toggleGroup() {
+    const choice = {
+      collapsed: !collapsed,
+      overrideSeq: inSessionSearch.navigationRevision,
+    };
+    for (const message of messages) {
+      disclosures.set(`${message.session_id}:${message.ordinal}`, choice);
+    }
+    onToggle?.();
+  }
 
   function messageToolCount(message: Message): number {
     const structured = message.tool_calls?.length ?? 0;
@@ -88,8 +132,18 @@
 
 <div class="tool-group">
   <div class="tool-group-header">
-    <span class="gear-icon"><SettingsIcon size="12" strokeWidth="2" aria-hidden="true" /></span>
-    <span class="group-label">{label}</span>
+    <button
+      class="tool-group-toggle"
+      aria-expanded={!collapsed}
+      aria-controls={bodyId}
+      onclick={toggleGroup}
+    >
+      <span class="group-chevron" class:open={!collapsed}>
+        <ChevronRightIcon size="12" strokeWidth="2" aria-hidden="true" />
+      </span>
+      <span class="gear-icon"><SettingsIcon size="12" strokeWidth="2" aria-hidden="true" /></span>
+      <span class="group-label">{label}</span>
+    </button>
     <CopyButton
       revealOnHover
       {copied}
@@ -101,7 +155,11 @@
     />
     <span class="group-timestamp">{formatTimestamp(timestamp)}</span>
   </div>
-  <div class="tool-group-body">
+  {#if collapsed && divider}
+    <div class="read-progress-divider" role="separator" aria-label={m.read_progress_boundary()}>{divider.label}</div>
+  {/if}
+  <!-- Keep children mounted so closing the group preserves individual disclosures. -->
+  <div class="tool-group-body" id={bodyId} hidden={collapsed}>
     {#each displayMessages as message (message.ordinal)}
       {#if divider?.ordinal === message.ordinal}
         <div class="read-progress-divider" role="separator" aria-label={m.read_progress_boundary()}>{divider.label}</div>
@@ -158,6 +216,11 @@
     padding: 8px 12px;
   }
   .tool-group-header { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .tool-group-toggle { display: flex; align-items: center; gap: 8px; text-align: left; border-radius: var(--radius-sm); }
+  .tool-group-toggle:hover { background: var(--bg-surface-hover); }
+  .group-chevron { display: flex; color: var(--text-muted); }
+  .group-chevron.open { transform: rotate(90deg); }
+  .tool-group-body[hidden] { display: none; }
   .gear-icon { display: flex; align-items: center; flex-shrink: 0; color: var(--accent-amber); }
   .group-label { font-size: 12px; font-weight: 600; color: var(--accent-amber); }
   .group-timestamp { font-size: 12px; color: var(--text-muted); margin-left: auto; }

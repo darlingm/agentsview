@@ -34,7 +34,7 @@ export function settingsPanels(): SettingsPanelMeta[] {
       title: m.appearance_title(),
       description: m.appearance_description(),
       group: preferences,
-      keywords: m.settings_search_keywords_appearance(),
+      keywords: `${m.settings_search_keywords_appearance()} ${m.appearance_expand_tool_groups()}`,
     },
     {
       id: "language",
