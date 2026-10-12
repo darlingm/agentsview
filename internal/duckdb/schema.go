@@ -21,7 +21,8 @@ import (
 // stored Devin source identities; pre-111 mirrors would otherwise keep
 // serving bare ids that deduplicate across sessions.
 // v17 adds session groups to the rebuilt mirror.
-const SchemaVersion = 17
+// v18 adds the user-owned archived_at marker.
+const SchemaVersion = 18
 
 const schemaVersionMetadataKey = "agentsview_schema_version"
 
@@ -175,6 +176,7 @@ var mirrorTables = []tableSpec{
 			transcript_fidelity TEXT NOT NULL DEFAULT '',
 			parser_malformed_lines INTEGER NOT NULL DEFAULT 0,
 			is_truncated BOOLEAN NOT NULL DEFAULT FALSE,
+			archived_at TIMESTAMP,
 			deleted_at TIMESTAMP,
 			deletion_cause TEXT,
 			created_at TIMESTAMP,

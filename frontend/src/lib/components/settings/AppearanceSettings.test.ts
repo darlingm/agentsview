@@ -5,6 +5,7 @@ import AppearanceSettings from "./AppearanceSettings.svelte";
 import { SettingsService } from "../../api/generated/index";
 import { settings } from "../../stores/settings.svelte.js";
 import { sync } from "../../stores/sync.svelte.js";
+import { sessionArchive } from "../../stores/sessionArchive.svelte.js";
 import { ui } from "../../stores/ui.svelte.js";
 
 vi.mock("../../api/generated/index", async (importOriginal) => {
@@ -47,6 +48,8 @@ describe("AppearanceSettings", () => {
   });
 
   afterEach(() => {
+    sessionArchive.setVisibility("hide");
+    sessionArchive.onlyArchived = false;
     ui.setZoomLevel(100);
     ui.renderUnknownXmlBlocksAsPreformatted = false;
     if (ui.highContrast) ui.toggleHighContrast();
@@ -203,4 +206,17 @@ describe("AppearanceSettings", () => {
     expect((getByRole("radio", { name: "Agentsview" }) as HTMLButtonElement).disabled).toBe(true);
     expect((getByRole("radio", { name: "Matplotlib" }) as HTMLButtonElement).disabled).toBe(true);
   });
+});
+
+it("keeps the saved archive display preference separate from the list filter", async () => {
+  sessionArchive.visibility = "hide";
+  sessionArchive.onlyArchived = true;
+  const { getByRole, queryByRole } = render(AppearanceSettings);
+  const control = getByRole("radiogroup", { name: "Archived sessions in the session list" });
+  expect(control).toBeTruthy();
+  expect(queryByRole("checkbox", { name: "Show only archived" })).toBeNull();
+  await fireEvent.click(getByRole("radio", { name: "Show dimmed" }));
+  expect(sessionArchive.visibility).toBe("dim");
+  expect(sessionArchive.onlyArchived).toBe(true);
+  expect(localStorage.getItem("agentsview-archived-session-visibility")).toBe("dim");
 });

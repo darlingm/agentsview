@@ -72,7 +72,7 @@ const pgSessionBaseCols = `id, project, project_assigned, machine, agent,
 	cwd, git_branch, source_session_id, source_version,
 	group_key, transcript_fidelity, parser_malformed_lines, is_truncated,
 	secret_leak_count, secrets_rules_version,
-	deleted_at, deletion_cause, termination_status, transcript_revision, trash_includes_codex_pages`
+	archived_at, deleted_at, deletion_cause, termination_status, transcript_revision, trash_includes_codex_pages`
 
 // pgSessionCols is the column list for full PG session queries.
 // PostgreSQL retains the source file path used by read-side session
@@ -126,7 +126,7 @@ func scanPGSessionWithSource(
 ) (db.Session, error) {
 	var s db.Session
 	var createdAt *time.Time
-	var startedAt, endedAt, deletedAt *time.Time
+	var startedAt, endedAt, archivedAt, deletedAt *time.Time
 	targets := []any{
 		&s.ID, &s.Project, &s.ProjectAssigned, &s.Machine, &s.Agent,
 		&s.AgentLabel, &s.Entrypoint, &s.SessionKind,
@@ -156,7 +156,7 @@ func scanPGSessionWithSource(
 		&s.SourceSessionID, &s.SourceVersion,
 		&s.GroupKey, &s.TranscriptFidelity, &s.ParserMalformedLines, &s.IsTruncated,
 		&s.SecretLeakCount, &s.SecretsRulesVersion,
-		&deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision, &s.TrashIncludesCodexPages,
+		&archivedAt, &deletedAt, &s.DeletionCause, &s.TerminationStatus, &s.TranscriptRevision, &s.TrashIncludesCodexPages,
 	}
 	if includeSource {
 		targets = append(targets, &s.FilePath)
@@ -175,6 +175,10 @@ func scanPGSessionWithSource(
 	if endedAt != nil {
 		str := FormatISO8601(*endedAt)
 		s.EndedAt = &str
+	}
+	if archivedAt != nil {
+		str := FormatISO8601(*archivedAt)
+		s.ArchivedAt = &str
 	}
 	if deletedAt != nil {
 		str := FormatISO8601(*deletedAt)
@@ -437,9 +441,7 @@ func (s *Store) GetSidebarSessionIndex(
 	rootFilter := f
 	rootFilter.IncludeChildren = false
 	rootWhere, rootArgs := buildPGSessionBaseFilter(rootFilter)
-	canonicalRootWhere := db.BuildCanonicalRootWhere(
-		s.sessionDialect(), "sessions", f.IncludeOrphans,
-	)
+	canonicalRootWhere := db.BuildSidebarRootWhere(f, s.sessionDialect(), "sessions")
 	var total int
 	countQuery := "SELECT COUNT(*) FROM sessions WHERE " +
 		rootWhere + " AND " + canonicalRootWhere
@@ -467,6 +469,7 @@ func (s *Store) GetSidebarSessionIndex(
 			started_at,
 			ended_at,
 			created_at,
+			archived_at,
 			termination_status,
 			message_count,
 			user_message_count,
@@ -508,14 +511,17 @@ func (s *Store) getSidebarSessionIndexPage(
 	rootFilter.Cursor = ""
 	rootFilter.Starred = false
 	rootWhere, rootArgs := buildPGSessionBaseFilter(rootFilter)
-	canonicalRootWhere := db.BuildCanonicalRootWhere(s.sessionDialect(), "sessions", f.IncludeOrphans)
+	canonicalRootWhere := db.BuildSidebarRootWhere(f, s.sessionDialect(), "sessions")
 	childAutomationPred := db.PostgresQueryDialect().AutomatedScopePredicate(
 		db.NormalizeAutomatedScope(f.AutomatedScope, f.ExcludeAutomated),
 		"s.is_automated",
 	)
 	childAutomationWhere := ""
+	if pred := db.ArchiveStatePredicate(f.ArchiveState, "s"); pred != "" {
+		childAutomationWhere = " AND " + pred
+	}
 	if childAutomationPred != "" {
-		childAutomationWhere = " AND " + childAutomationPred
+		childAutomationWhere += " AND " + childAutomationPred
 	}
 
 	var total int
@@ -706,6 +712,7 @@ func (s *Store) getSidebarSessionIndexPage(
 			s.started_at,
 			s.ended_at,
 			s.created_at,
+			s.archived_at,
 			s.termination_status,
 			s.message_count,
 			s.user_message_count,
@@ -739,7 +746,7 @@ func scanPGSidebarSessionIndexRows(
 	sessions := []db.SidebarSessionIndexRow{}
 	for rows.Next() {
 		var row db.SidebarSessionIndexRow
-		var startedAt, endedAt, createdAt *time.Time
+		var startedAt, endedAt, createdAt, sidebarArchivedAt *time.Time
 		if err := rows.Scan(
 			&row.ID,
 			&row.ParentSessionID,
@@ -755,6 +762,7 @@ func scanPGSidebarSessionIndexRows(
 			&startedAt,
 			&endedAt,
 			&createdAt,
+			&sidebarArchivedAt,
 			&row.TerminationStatus,
 			&row.MessageCount,
 			&row.UserMessageCount,
@@ -766,6 +774,10 @@ func scanPGSidebarSessionIndexRows(
 				"scanning sidebar session index: %w",
 				err,
 			)
+		}
+		if sidebarArchivedAt != nil {
+			str := FormatISO8601(*sidebarArchivedAt)
+			row.ArchivedAt = &str
 		}
 		if startedAt != nil {
 			str := FormatISO8601(*startedAt)

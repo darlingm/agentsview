@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     -- to suppress benign incremental-vs-full skew; deliberately not
     -- mirrored to PG/DuckDB.
     last_write_incremental INTEGER NOT NULL DEFAULT 0,
+    archived_at TEXT,
     deleted_at  TEXT,
     -- Before revert pages had separate IDs, trash covered the whole thread.
     -- A restore ends that inherited scope; later trash actions are per-file.

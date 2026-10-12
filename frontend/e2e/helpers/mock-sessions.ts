@@ -16,6 +16,7 @@ interface MockSession {
   created_at: string;
   file_path: string;
   termination_status?: string | null;
+  archived_at?: string | null;
   is_automated?: boolean;
   is_teammate?: boolean;
 }
@@ -61,7 +62,14 @@ export function handleSessionsRoute(dataSets: SessionDataSet[]) {
     const project = url.searchParams.get("project");
 
     if (pathname.endsWith("/api/v1/sessions/sidebar-index")) {
-      const filtered = filterSessions(dataSets, project);
+      const filtered = filterSessions(dataSets, project).filter((session) => {
+        const archive = url.searchParams.get("archive_state");
+        return archive === "archived"
+          ? Boolean(session.archived_at)
+          : archive === "unarchived"
+            ? !session.archived_at
+            : true;
+      });
       await route.fulfill({
         json: {
           sessions: filtered.map(toSidebarIndexRow),
@@ -91,7 +99,14 @@ export function handleSessionsRoute(dataSets: SessionDataSet[]) {
       return;
     }
 
-    const filtered = filterSessions(dataSets, project);
+    const filtered = filterSessions(dataSets, project).filter((session) => {
+      const archive = url.searchParams.get("archive_state");
+      return archive === "archived"
+        ? Boolean(session.archived_at)
+        : archive === "unarchived"
+          ? !session.archived_at
+          : true;
+    });
     const startIndex = cursor ? parseInt(cursor, 10) : 0;
     const slice = filtered.slice(startIndex, startIndex + limit);
     const nextCursor =
@@ -140,6 +155,7 @@ function toSidebarIndexRow(session: MockSession) {
     started_at: session.started_at,
     ended_at: session.ended_at,
     created_at: session.created_at,
+    archived_at: session.archived_at ?? null,
     termination_status: session.termination_status ?? null,
     message_count: session.message_count,
     user_message_count: session.user_message_count ?? session.message_count,

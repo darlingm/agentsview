@@ -1,9 +1,11 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import { flushSync, mount, unmount } from "svelte";
 import { createClassComponent } from "svelte/legacy";
 import SessionItem from "./SessionItem.svelte";
+import { sessionArchive } from "../../stores/sessionArchive.svelte.js";
 import { sessions } from "../../stores/sessions.svelte.js";
+import { starred } from "../../stores/starred.svelte.js";
 
 let component: ReturnType<typeof mount> | undefined;
 
@@ -12,6 +14,10 @@ afterEach(() => {
   component = undefined;
   document.body.innerHTML = "";
   sessions.machineLabels = {};
+  starred.ids = new Set();
+  sessionArchive.visibility = "hide";
+  sessionArchive.onlyArchived = false;
+  vi.restoreAllMocks();
 });
 
 describe("SessionItem identity", () => {
@@ -51,6 +57,65 @@ describe("SessionItem identity", () => {
     });
     flushSync();
   }
+
+  it("marks archived rows without making them disabled", () => {
+    sessionArchive.visibility = "dim";
+    mountSession({ archived_at: "2026-09-01T10:00:00Z" });
+    const row = document.querySelector<HTMLElement>(".session-item")!;
+    expect(row.classList.contains("archived-dimmed")).toBe(true);
+    expect(row.getAttribute("tabindex")).toBe("0");
+    expect(document.querySelector(".archived-badge")?.getAttribute("aria-label")).toBe("Archived");
+    sessionArchive.onlyArchived = true;
+    flushSync();
+    expect(row.classList.contains("archived-dimmed")).toBe(false);
+  });
+
+  it.each([false, true])(
+    "keeps the archive indicator in metadata and the favorite button separate (compact=%s)",
+    (compact) => {
+      const select = vi.spyOn(sessions, "selectSession").mockReturnValue(undefined);
+      const archive = vi.spyOn(sessions, "setArchived").mockResolvedValue();
+      mountSession({ archived_at: "2026-09-01T10:00:00Z" }, { compact });
+      const row = document.querySelector<HTMLElement>(".session-item")!;
+      const badge = row.querySelector<HTMLElement>(".archived-badge")!;
+      expect(badge.parentElement?.classList.contains("session-meta")).toBe(true);
+      expect(badge.previousElementSibling?.classList.contains("session-count")).toBe(true);
+      expect(row.firstElementChild?.classList.contains("tree-spacer")).toBe(true);
+      expect(badge.closest("button")).toBeNull();
+      badge.click();
+      expect(select).toHaveBeenCalledWith("session");
+      expect(archive).not.toHaveBeenCalled();
+    },
+  );
+
+  it("lets an archived session remain favorited, without reusing its star action", () => {
+    starred.ids = new Set(["session"]);
+    const toggle = vi.spyOn(starred, "toggle").mockReturnValue(undefined);
+    const archive = vi.spyOn(sessions, "setArchived").mockResolvedValue();
+    mountSession({ archived_at: "2026-09-01T10:00:00Z" });
+    const star = document.querySelector<HTMLButtonElement>(".star-btn")!;
+    expect(star.classList.contains("starred")).toBe(true);
+    expect(star.getAttribute("aria-label")).toBe("Unstar session");
+    expect(star.querySelector(".archived-badge")).toBeNull();
+    star.click();
+    expect(toggle).toHaveBeenCalledWith("session");
+    expect(archive).not.toHaveBeenCalled();
+  });
+
+  it("archives from the context menu without moving the session to trash", async () => {
+    const archive = vi.spyOn(sessions, "setArchived").mockResolvedValue();
+    mountSession();
+    document
+      .querySelector(".session-item")!
+      .dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    flushSync();
+    const button = Array.from(
+      document.querySelectorAll<HTMLButtonElement>(".context-menu-item"),
+    ).find((item) => item.textContent?.trim() === "Archive")!;
+    expect(button).toBeTruthy();
+    button.click();
+    expect(archive).toHaveBeenCalledWith(["session"], true);
+  });
 
   it("renders the session label and entrypoint badge", () => {
     sessions.machineLabels = { "installation-a": "Workstation A" };

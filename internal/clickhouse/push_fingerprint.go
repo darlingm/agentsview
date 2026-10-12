@@ -94,7 +94,7 @@ func sessionFingerprintFields(sess db.Session, machine string) []any {
 		sess.DataVersion,
 		sess.Cwd, sess.GitBranch, sess.SourceSessionID, sess.SourceVersion, sess.GroupKey, sess.TranscriptFidelity,
 		sess.ParserMalformedLines, sess.IsTruncated,
-		sess.DeletedAt, sess.DeletionCause, sess.CreatedAt, sess.TerminationStatus,
+		sess.ArchivedAt, sess.DeletedAt, sess.DeletionCause, sess.CreatedAt, sess.TerminationStatus,
 		sess.SecretLeakCount, sess.SecretsRulesVersion,
 	}
 }
@@ -127,7 +127,7 @@ var sessionFingerprintColumns = []string{
 	"data_version",
 	"cwd", "git_branch", "source_session_id", "source_version", "group_key", "transcript_fidelity",
 	"parser_malformed_lines", "is_truncated",
-	"deleted_at", "deletion_cause", "created_at", "termination_status",
+	"archived_at", "deleted_at", "deletion_cause", "created_at", "termination_status",
 	"secret_leak_count", "secrets_rules_version",
 }
 

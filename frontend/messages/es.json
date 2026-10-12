@@ -852,7 +852,7 @@
   "settings_search_empty": "Ninguna configuración coincide",
   "settings_search_clear": "Borrar búsqueda",
   "settings_search_result": "Mostrando {category}",
-  "settings_search_keywords_appearance": "tema contraste diseño texto fuente bloques zoom theme contrast layout text font blocks",
+  "settings_search_keywords_appearance": "tema contraste diseño texto fuente bloques zoom theme contrast layout text font blocks Archivar Archivada",
   "settings_search_keywords_language": "idioma región traducción language locale translation",
   "settings_search_keywords_date_ranges": "fecha rango páginas vinculadas date range linked pages",
   "settings_search_keywords_terminal": "terminal reanudar lanzar binario argumentos portapapeles resume launch binary arguments clipboard",
@@ -2519,5 +2519,16 @@
   "tool_effectiveness_left_out": "Omitido de la entrada del modelo",
   "tool_effectiveness_model_saw": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"el modelo vio {countLabel} byte","countPlural=other":"el modelo vio {countLabel} bytes","countPlural=many":"el modelo vio {countLabel} bytes"}}],
   "tool_effectiveness_open_session": "Abrir sesión",
-  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} mensaje","countPlural=other":"{countLabel} mensajes"}}]
+  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} mensaje","countPlural=other":"{countLabel} mensajes"}}],
+  "session_archive_visibility": "Sesiones archivadas en la lista de sesiones",
+  "session_archive_hide": "Ocultar",
+  "session_archive_dim": "Mostrar atenuadas",
+  "session_archive_visibility_help": "Elige su apariencia durante la navegación normal. Las búsquedas y las estadísticas no cambian.",
+  "session_archive_only": "Mostrar solo archivadas",
+  "session_archive_error": "No se pudo cambiar el estado de archivo. Inténtalo de nuevo.",
+  "session_archive_archive": "Archivar",
+  "session_archive_unarchive": "Desarchivar",
+  "session_archive_archived_label": "Archivada",
+  "session_archive_archived_count": "Archivadas: {countLabel}",
+  "session_archive_unarchived_count": "Desarchivadas: {countLabel}"
 }

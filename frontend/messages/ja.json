@@ -850,7 +850,7 @@
   "settings_search_empty": "一致する設定がありません",
   "settings_search_clear": "検索をクリア",
   "settings_search_result": "{category}を表示中",
-  "settings_search_keywords_appearance": "テーマのコントラスト レイアウト テキスト フォント ブロック ズーム zoom",
+  "settings_search_keywords_appearance": "テーマのコントラスト レイアウト テキスト フォント ブロック ズーム zoom アーカイブ アーカイブ済み",
   "settings_search_keywords_language": "言語ロケールの翻訳",
   "settings_search_keywords_date_ranges": "リンクされたページの日付範囲",
   "settings_search_keywords_terminal": "ターミナル再開バイナリ引数クリップボードの起動",
@@ -2505,5 +2505,16 @@
   "tool_effectiveness_left_out": "モデルへの入力から省略",
   "tool_effectiveness_model_saw": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"モデルが見たのは {countLabel} バイト","countPlural=other":"モデルが見たのは {countLabel} バイト"}}],
   "tool_effectiveness_open_session": "セッションを開く",
-  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} 件のメッセージ","countPlural=other":"{countLabel} 件のメッセージ"}}]
+  "tool_effectiveness_message_count": [{"declarations":["input count","input countLabel","local countPlural = count: plural"],"selectors":["countPlural"],"match":{"countPlural=one":"{countLabel} 件のメッセージ","countPlural=other":"{countLabel} 件のメッセージ"}}],
+  "session_archive_visibility": "セッション一覧のアーカイブ済みセッション",
+  "session_archive_hide": "非表示",
+  "session_archive_dim": "薄く表示",
+  "session_archive_visibility_help": "通常の閲覧時の表示方法を選択します。検索と分析には影響しません。",
+  "session_archive_only": "アーカイブ済みのみ表示",
+  "session_archive_error": "アーカイブ状態を変更できませんでした。もう一度お試しください。",
+  "session_archive_archive": "アーカイブ",
+  "session_archive_unarchive": "アーカイブ解除",
+  "session_archive_archived_label": "アーカイブ済み",
+  "session_archive_archived_count": "アーカイブ済み: {countLabel}",
+  "session_archive_unarchived_count": "アーカイブ解除済み: {countLabel}"
 }

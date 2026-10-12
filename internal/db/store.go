@@ -104,6 +104,9 @@ type Store interface {
 	GetUsageMatchingSessionCount(ctx context.Context, f UsageFilter) (int, error)
 	GetSessionUsage(ctx context.Context, sessionID string, includeBreakdown bool) (*SessionUsage, error)
 
+	// Archive state is user-owned metadata, separate from trash.
+	SetSessionsArchived(ctx context.Context, ids []string, archived bool) ([]SessionArchiveState, error)
+
 	// Stars.
 	StarSession(ctx context.Context, sessionID string) (bool, error)
 	UnstarSession(ctx context.Context, sessionID string) error
